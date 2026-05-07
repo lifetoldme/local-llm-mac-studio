@@ -35,7 +35,7 @@ log_info "Checking prerequisites..."
 
 command -v brew >/dev/null 2>&1 || log_error "Homebrew is not installed. Install it first: https://brew.sh"
 
-for pkg in llama.cpp colima docker docker-compose hf; do
+for pkg in colima docker docker-compose hf; do
   if ! brew list "$pkg" &>/dev/null; then
     log_info "Installing $pkg via Homebrew..."
     brew install "$pkg"
@@ -44,18 +44,22 @@ for pkg in llama.cpp colima docker docker-compose hf; do
   fi
 done
 
+if ! command -v python3 >/dev/null 2>&1; then
+  log_error "python3 is not installed. Install it first via Homebrew: brew install python"
+fi
+
+log_info "Installing/upgrading mlx-lm via pip..."
+python3 -m pip install --user --upgrade mlx-lm
+log_success "mlx-lm installed/updated"
+
 # --------------------------------------------------------------
 # 2. Create required directories
 # --------------------------------------------------------------
 log_info "Creating required directories..."
 
-sudo mkdir -p /opt/models
-sudo chown "$(whoami)" /opt/models
-log_success "/opt/models created"
-
-sudo mkdir -p /var/log/llamacpp
-sudo chown "$(whoami)" /var/log/llamacpp
-log_success "/var/log/llamacpp created"
+sudo mkdir -p /var/log/mlx
+sudo chown "$(whoami)" /var/log/mlx
+log_success "/var/log/mlx created"
 
 mkdir -p ~/Library/LaunchAgents
 log_success "~/Library/LaunchAgents exists"
@@ -72,17 +76,17 @@ mkdir -p ~/.docker
 DOCKER_CONFIG=~/.docker/config.json
 
 if [ ! -f "$DOCKER_CONFIG" ]; then
-  cat > "$DOCKER_CONFIG" << 'EOF'
+  cat > "$DOCKER_CONFIG" << 'JSONEOF'
 {
   "cliPluginsExtraDirs": [
     "/opt/homebrew/lib/docker/cli-plugins"
   ]
 }
-EOF
+JSONEOF
   log_success "Created ~/.docker/config.json"
 else
   # Check if the plugin dir is already present
-  if ! grep -q "cliPluginsExtraDirs" "$DOCKER_CONFIG"; do
+  if ! grep -q "cliPluginsExtraDirs" "$DOCKER_CONFIG"; then
     log_warn "~/.docker/config.json exists but is missing cliPluginsExtraDirs. Add it manually:"
     echo '  "cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]'
   else
@@ -108,35 +112,14 @@ fi
 export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
 
 # --------------------------------------------------------------
-# 5. Check model is downloaded
-# --------------------------------------------------------------
-log_info "Checking for model file..."
-
-MODEL_PATH="/opt/models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
-if [ ! -f "$MODEL_PATH" ]; then
-  log_warn "Model not found at $MODEL_PATH"
-  echo ""
-  echo "  Download it now? This will take a few minutes."
-  read -r -p "  [y/N] " response
-  if [[ "$response" =~ ^[Yy]$ ]]; then
-    hf download bartowski/Meta-Llama-3.1-8B-Instruct-GGUF \
-      --include "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf" \
-      --local-dir /opt/models
-    log_success "Model downloaded"
-  else
-    log_warn "Skipping model download. llama-server will fail to start until a model is present at $MODEL_PATH"
-  fi
-else
-  log_success "Model found at $MODEL_PATH"
-fi
-
-# --------------------------------------------------------------
-# 6. Install LaunchAgents
+# 5. Install LaunchAgents
 # --------------------------------------------------------------
 log_info "Installing LaunchAgents..."
 
 PLISTS=(
-  "com.llamacpp.server.plist"
+  "com.mlx.fast.plist"
+  "com.mlx.reasoning.plist"
+  "com.mlx.coding.plist"
   "com.colima.server.plist"
   "com.localllm.compose.plist"
 )
@@ -160,7 +143,7 @@ for plist in "${PLISTS[@]}"; do
 done
 
 # --------------------------------------------------------------
-# 7. Copy Docker Compose file
+# 6. Copy Docker Compose file
 # --------------------------------------------------------------
 log_info "Copying docker-compose.yml..."
 
@@ -168,7 +151,7 @@ cp "$REPO_DIR/docker/docker-compose.yml" ~/docker/local-llm/docker-compose.yml
 log_success "docker-compose.yml copied to ~/docker/local-llm/"
 
 # --------------------------------------------------------------
-# 8. Start Colima
+# 7. Start Colima
 # --------------------------------------------------------------
 log_info "Starting Colima..."
 
@@ -180,7 +163,7 @@ else
 fi
 
 # --------------------------------------------------------------
-# 9. Start Docker Compose stack
+# 8. Start Docker Compose stack
 # --------------------------------------------------------------
 log_info "Starting Docker Compose stack..."
 
@@ -189,7 +172,7 @@ docker compose up -d
 log_success "Open WebUI and ChromaDB started"
 
 # --------------------------------------------------------------
-# 10. Final health check
+# 9. Final health check
 # --------------------------------------------------------------
 echo ""
 log_info "Waiting 15 seconds for services to initialize..."
@@ -200,13 +183,6 @@ echo "=============================================="
 echo "  Health Check"
 echo "=============================================="
 
-# llama-server
-if pgrep -x "llama-server" >/dev/null; then
-  log_success "llama-server is running"
-else
-  log_warn "llama-server is NOT running — check /var/log/llamacpp/server.error.log"
-fi
-
 # Colima
 if colima status 2>/dev/null | grep -q "colima is running"; then
   log_success "Colima is running"
@@ -214,11 +190,23 @@ else
   log_warn "Colima is NOT running"
 fi
 
-# llama.cpp API
+# MLX APIs
 if curl -sf http://localhost:8080/v1/models >/dev/null; then
-  log_success "llama.cpp API responding on :8080"
+  log_success "MLX fast model API responding on :8080"
 else
-  log_warn "llama.cpp API not responding — model may still be loading"
+  log_warn "MLX fast model API not responding — model may still be loading"
+fi
+
+if curl -sf http://localhost:8081/v1/models >/dev/null; then
+  log_success "MLX reasoning model API responding on :8081"
+else
+  log_warn "MLX reasoning model API not responding — model may still be loading"
+fi
+
+if curl -sf http://localhost:8082/v1/models >/dev/null; then
+  log_success "MLX coding model API responding on :8082"
+else
+  log_warn "MLX coding model API not responding — model may still be loading"
 fi
 
 # ChromaDB
@@ -239,9 +227,11 @@ echo ""
 echo "=============================================="
 echo "  Install complete!"
 echo ""
-echo "  Open WebUI:   http://$(ipconfig getifaddr en0):3000"
-echo "  llama.cpp API: http://$(ipconfig getifaddr en0):8080/v1"
-echo "  ChromaDB:     http://$(ipconfig getifaddr en0):8000"
+echo "  Open WebUI:         http://$(ipconfig getifaddr en0):3000"
+echo "  MLX fast API:       http://$(ipconfig getifaddr en0):8080/v1"
+echo "  MLX reasoning API:  http://$(ipconfig getifaddr en0):8081/v1"
+echo "  MLX coding API:     http://$(ipconfig getifaddr en0):8082/v1"
+echo "  ChromaDB:           http://$(ipconfig getifaddr en0):8000"
 echo ""
 echo "  Remember to enable auto-login for headless boot:"
 echo "  System Settings → General → Login Items & Extensions"

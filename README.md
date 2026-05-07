@@ -1,57 +1,72 @@
 # Local LLM Stack — Mac Studio (Apple Silicon)
 
-A fully self-hosted local LLM setup running on an Apple Silicon Mac Studio with 32GB RAM. Provides a ChatGPT-style web interface, private web search, and a vector database for RAG — all running locally with no cloud dependencies.
+A fully self-hosted local LLM setup running on an Apple Silicon Mac Studio with 32GB RAM, using three independent `mlx_lm.server` instances for fast, reasoning, and coding workloads.
 
 ---
 
 ## Architecture
 
 ```
-macOS (native, Metal GPU accelerated)
-└── llama-server (llama.cpp)  →  :8080  OpenAI-compatible API
+macOS (native, Metal GPU accelerated — MLX)
+├── mlx_lm.server  (fast/light model)    →  :8080   ← Home Assistant, quick queries
+├── mlx_lm.server  (reasoning model)     →  :8081   ← Open WebUI default, log analysis
+└── mlx_lm.server  (coding model)        →  :8082   ← JetBrains / opencode agent
 
 Docker via Colima
-├── open-webui               →  :3000  Chat interface
+├── open-webui               →  :3000  (connects to all three endpoints)
 ├── chromadb                 →  :8000  Vector DB for RAG
 └── searxng                  →  internal only (optional: :8081)
 ```
 
-The llama.cpp server runs natively on macOS to take full advantage of Apple Silicon's Metal GPU acceleration. All other services run in Docker via Colima.
+All three MLX servers expose OpenAI-compatible endpoints such as `/v1/chat/completions` and `/v1/models`.
 
 ---
 
 ## Hardware Requirements
 
 - Apple Silicon Mac (M1 or later)
-- 32GB unified memory minimum
+- 32GB unified memory recommended
 - macOS 26 (Tahoe) or later
 
 ---
 
 ## Prerequisites
 
-Install the following via Homebrew:
+Install Homebrew packages:
 
 ```bash
-brew install llama.cpp colima docker docker-compose hf
+brew install colima docker docker-compose hf
 ```
 
-> **Note:** `huggingface-cli` is deprecated. Use `hf` for all model downloads.
+Install MLX server tooling via pip:
+
+```bash
+python3 -m pip install --user mlx-lm
+```
+
+> `mlx_lm.server` path can vary by Python setup. Verify with:
+>
+> ```bash
+> which mlx_lm.server
+> python3 -m mlx_lm.server --help
+> ```
+>
+> LaunchAgent plists in this repo default to `/usr/local/bin/mlx_lm.server`. Update if your path differs.
 
 Configure Docker to find the Compose plugin:
 
 ```bash
 mkdir -p ~/.docker
-cat > ~/.docker/config.json << 'EOF'
+cat > ~/.docker/config.json << 'EOFJSON'
 {
   "cliPluginsExtraDirs": [
     "/opt/homebrew/lib/docker/cli-plugins"
   ]
 }
-EOF
+EOFJSON
 ```
 
-Point Docker at Colima's socket — add this to your `~/.zshrc`:
+Point Docker at Colima's socket (add to `~/.zshrc`):
 
 ```bash
 export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
@@ -72,15 +87,15 @@ cd local-llm-mac-studio
 chmod +x scripts/*.sh
 ```
 
-### 2. Download the model
+### 2. Download models
 
 ```bash
 sudo mkdir -p /opt/models
 sudo chown $(whoami) /opt/models
 
-hf download bartowski/Meta-Llama-3.1-8B-Instruct-GGUF \
-  --include "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf" \
-  --local-dir /opt/models
+hf download mlx-community/Qwen2.5-3B-Instruct-4bit --local-dir /opt/models/qwen2.5-3b
+hf download mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit --local-dir /opt/models/deepseek-r1-14b
+hf download mlx-community/Qwen2.5-Coder-14B-Instruct-4bit --local-dir /opt/models/qwen2.5-coder-14b
 ```
 
 ### 3. Run the install script
@@ -89,133 +104,107 @@ hf download bartowski/Meta-Llama-3.1-8B-Instruct-GGUF \
 ./scripts/install.sh
 ```
 
-This handles everything in one shot: creates directories, configures Docker, installs and bootstraps all three LaunchAgents, starts Colima, and brings up the Docker Compose stack.
-
 ### 4. Run the SearXNG setup script
 
 ```bash
 ./scripts/setup-searxng.sh
 ```
 
-This copies the SearXNG config, generates a secret key, and verifies the stack is healthy. Only needed once per machine.
-
-### 5. Enable auto-login
-
-For a headless server, enable automatic login so LaunchAgents fire on boot without requiring a manual login:
-
-System Settings → General → Login Items & Extensions → enable automatic login for your user.
-
-### 6. Verify the full stack
+### 5. Verify the full stack
 
 ```bash
 ./scripts/status.sh
 ```
 
-All services should show green. You can also access Open WebUI at `http://<HOST_IP>:3000` from any device on your network.
-
 ---
 
-## Auto-start
+## Auto-start (LaunchAgents)
 
-Three LaunchAgents in `~/Library/LaunchAgents/` handle automatic startup at login:
+LaunchAgents in `~/Library/LaunchAgents/`:
 
-| Plist | Service | Behavior |
-|---|---|---|
-| `com.llamacpp.server.plist` | llama-server (Metal GPU) | Persistent, restarts on crash |
-| `com.colima.server.plist` | Colima Docker VM | Persistent, restarts on crash |
-| `com.localllm.compose.plist` | Open WebUI + ChromaDB + SearXNG | One-shot, runs `docker compose up -d` 30s after login |
+| Plist | Role | Model | Port | Behavior |
+|---|---|---|---|---|
+| `com.mlx.fast.plist` | Fast/light | `mlx-community/Qwen2.5-3B-Instruct-4bit` | 8080 | Persistent, restarts on crash |
+| `com.mlx.reasoning.plist` | Reasoning | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | 8081 | Persistent, restarts on crash |
+| `com.mlx.coding.plist` | Coding | `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` | 8082 | Persistent, restarts on crash |
+| `com.colima.server.plist` | Docker VM | Colima | n/a | Persistent, restarts on crash |
+| `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | One-shot compose up |
 
-### Managing LaunchAgents
+Manage LaunchAgents:
 
 ```bash
-# Reload after editing a plist
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/<plist>.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<plist>.plist
-
-# Check status of all agents
-launchctl list | grep -E "llamacpp|colima|localllm"
+launchctl list | grep -E "mlx|colima|localllm"
 ```
-
-> **macOS 26 note:** Use `launchctl bootstrap` not `launchctl load`. If bootstrap fails with error 5, strip extended attributes: `xattr -c ~/Library/LaunchAgents/<plist>.plist`
 
 ---
 
 ## Configuration
 
-### llama-server (com.llamacpp.server.plist)
+### MLX server configuration
 
-| Flag | Value | Notes |
-|---|---|---|
-| `--model` | `/opt/models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf` | Path to GGUF model file |
-| `--host` | `0.0.0.0` | Listen on all interfaces |
-| `--port` | `8080` | API port |
-| `--n-gpu-layers` | `99` | Offload all layers to Metal GPU |
-| `--ctx-size` | `32768` | Total context split across parallel slots |
-| `--parallel` | `2` | Concurrent slots — each gets 16384 tokens |
+| Service | Model | Host | Port |
+|---|---|---|---|
+| Fast | `mlx-community/Qwen2.5-3B-Instruct-4bit` | `0.0.0.0` | `8080` |
+| Reasoning | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | `0.0.0.0` | `8081` |
+| Coding | `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` | `0.0.0.0` | `8082` |
 
 ### Swapping models
 
-```bash
-# Download new model
-hf download <repo> --include "<model>.gguf" --local-dir /opt/models
-
-# Update the plist
-nano ~/Library/LaunchAgents/com.llamacpp.server.plist
-
-# Reload
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.llamacpp.server.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.llamacpp.server.plist
-```
-
-### Recommended models for 32GB RAM
-
-| Model | Size | Best for |
-|---|---|---|
-| Llama 3.1 8B Q4_K_M | ~5GB | General purpose, fast responses |
-| Qwen 2.5 Coder 32B Q4_K_M | ~20GB | Coding tasks |
-| DeepSeek R1 14B Q4_K_M | ~9GB | Reasoning and analysis |
-
-### Colima resources
-
-Colima is configured with 4 CPUs, 8GB RAM, and 60GB disk. To adjust:
+1. Edit the relevant plist in `~/Library/LaunchAgents/` and change `--model`.
+2. Reload it:
 
 ```bash
-colima stop
-colima start --cpu 4 --memory 8 --disk 60
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.mlx.<role>.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mlx.<role>.plist
 ```
 
-### SearXNG
-
-Config lives at `~/docker/local-llm/searxng/settings.yml`. To add or remove search engines, edit the `engines` list and restart:
+3. Confirm with:
 
 ```bash
-docker compose -f ~/docker/local-llm/docker-compose.yml restart searxng
+curl http://localhost:<port>/v1/models
 ```
 
-To expose SearXNG in your browser, uncomment the `ports` section in `docker/docker-compose.yml`, redeploy, and access it at `http://<HOST_IP>:8081`.
+### Recommended models (32GB RAM)
+
+| Role | Model | Est. RAM | Port |
+|---|---|---|---|
+| Fast/light | `mlx-community/Qwen2.5-3B-Instruct-4bit` | ~2GB | 8080 |
+| Reasoning | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | ~9GB | 8081 |
+| Coding | `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` | ~9GB | 8082 |
+
+---
+
+## Open WebUI Connections
+
+`docker/docker-compose.yml` configures Open WebUI with all three local endpoints using:
+
+- `OPENAI_API_BASE_URLS=http://host.docker.internal:8080/v1;http://host.docker.internal:8081/v1;http://host.docker.internal:8082/v1`
+- `OPENAI_API_KEYS=none;none;none`
+
+Open WebUI will discover all three endpoints and expose model selection via the model picker per conversation.
+You can also manage endpoints in **Admin → Connections**.
+
+---
+
+## Per-app routing guide
+
+- **Home Assistant** → `http://<HOST_IP>:8080/v1` (fast, low latency)
+- **Open WebUI** → default to `:8081`, optionally select coding models from `:8082`
+- **opencode / JetBrains** → `http://<HOST_IP>:8082/v1`
+- **Log monitoring/analysis** → `http://<HOST_IP>:8081/v1`
 
 ---
 
 ## Maintenance
 
-### Check status
-
 ```bash
 ./scripts/status.sh
-```
-
-### Update everything
-
-```bash
 ./scripts/update.sh
-```
-
-Or update individual components:
-
-```bash
-./scripts/update.sh --llama    # llama.cpp only
-./scripts/update.sh --docker   # Open WebUI, ChromaDB, SearXNG only
-./scripts/update.sh --colima   # Colima only
+./scripts/update.sh --mlx
+./scripts/update.sh --docker
+./scripts/update.sh --colima
 ```
 
 ---
@@ -224,10 +213,12 @@ Or update individual components:
 
 | Service | Location |
 |---|---|
-| llama-server stdout | `/var/log/llamacpp/server.log` |
-| llama-server stderr | `/var/log/llamacpp/server.error.log` |
-| Colima | `/var/log/llamacpp/colima.log` |
-| Docker Compose autostart | `/var/log/llamacpp/compose.log` |
+| MLX fast stdout | `/var/log/mlx/fast.log` |
+| MLX fast stderr | `/var/log/mlx/fast.error.log` |
+| MLX reasoning stdout | `/var/log/mlx/reasoning.log` |
+| MLX reasoning stderr | `/var/log/mlx/reasoning.error.log` |
+| MLX coding stdout | `/var/log/mlx/coding.log` |
+| MLX coding stderr | `/var/log/mlx/coding.error.log` |
 | Open WebUI | `docker logs open-webui` |
 | ChromaDB | `docker logs chromadb` |
 | SearXNG | `docker logs searxng` |
@@ -236,68 +227,52 @@ Or update individual components:
 
 ## Troubleshooting
 
-### launchctl bootstrap fails with error 5
-
-Known issue on macOS 26 (Tahoe). Fix:
+### Find the `mlx_lm.server` binary path
 
 ```bash
-# Strip extended attributes
-xattr -c ~/Library/LaunchAgents/<plist>.plist
-
-# Fix log directory ownership if needed
-sudo chown $(whoami) /var/log/llamacpp/
+which mlx_lm.server
+python3 -m mlx_lm.server --help
 ```
 
-### llama-server crashes on startup
+If needed, update `/usr/local/bin/mlx_lm.server` in each plist and reload with `launchctl`.
+
+### Model download issues
 
 ```bash
-cat /var/log/llamacpp/server.error.log
+hf auth login
+hf download mlx-community/Qwen2.5-3B-Instruct-4bit --local-dir /opt/models/qwen2.5-3b
 ```
 
-Common causes: model file not found, insufficient RAM for `--ctx-size`, binary path changed after Homebrew update (`which llama-server`).
-
-### "Request exceeds available context size"
-
-Increase `--ctx-size` in the plist. With `--parallel 2`, each slot gets `--ctx-size ÷ 2` tokens. Reload after editing.
-
-### Docker commands fail — socket not found
+### Port conflicts (8080/8081/8082)
 
 ```bash
-export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+lsof -nP -iTCP:8081 -sTCP:LISTEN
+lsof -nP -iTCP:8082 -sTCP:LISTEN
 ```
 
-Add permanently to `~/.zshrc` if missing.
+Stop conflicting process, then reload the affected LaunchAgent.
 
-### `docker compose` not found
-
-Ensure `~/.docker/config.json` has the `cliPluginsExtraDirs` entry pointing to `/opt/homebrew/lib/docker/cli-plugins`.
-
-### SearXNG not returning results in Open WebUI
+### Open WebUI cannot reach MLX servers
 
 ```bash
-# Test from inside the Open WebUI container
-docker exec open-webui curl -sf "http://searxng:8080/search?q=test&format=json"
-
-# Check SearXNG logs
-docker logs searxng
-
-# Verify JSON format is enabled
-grep -A5 "formats:" ~/docker/local-llm/searxng/settings.yml
-```
-
-If `settings.yml` is missing or corrupted, re-run `./scripts/setup-searxng.sh`.
-
-### Open WebUI cannot reach llama-server
-
-```bash
-# From the host
+# From host
 curl http://localhost:8080/v1/models
+curl http://localhost:8081/v1/models
+curl http://localhost:8082/v1/models
 
-# From inside the container
+# From inside Open WebUI container
 docker exec open-webui curl http://host.docker.internal:8080/v1/models
+docker exec open-webui curl http://host.docker.internal:8081/v1/models
+docker exec open-webui curl http://host.docker.internal:8082/v1/models
 ```
 
-If the container test fails, verify `extra_hosts: host.docker.internal:host-gateway` is present in `docker/docker-compose.yml`.
+If container checks fail, verify this entry exists in compose:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
 
 ---
 
@@ -306,18 +281,19 @@ If the container test fails, verify `extra_hosts: host.docker.internal:host-gate
 ```
 local-llm-mac-studio/
 ├── README.md
-├── .gitignore
 ├── launchagents/
-│   ├── com.llamacpp.server.plist      # llama-server auto-start
-│   ├── com.colima.server.plist        # Colima auto-start
-│   └── com.localllm.compose.plist    # Docker Compose auto-start
+│   ├── com.mlx.fast.plist
+│   ├── com.mlx.reasoning.plist
+│   ├── com.mlx.coding.plist
+│   ├── com.colima.server.plist
+│   └── com.localllm.compose.plist
 ├── docker/
-│   └── docker-compose.yml             # Open WebUI + ChromaDB + SearXNG
+│   └── docker-compose.yml
 ├── searxng/
-│   └── settings.yml                   # SearXNG config (uwsgi.ini is gitignored)
+│   └── settings.yml
 └── scripts/
-    ├── install.sh                     # One-shot setup for a new machine
-    ├── setup-searxng.sh               # SearXNG first-run initialization
-    ├── update.sh                      # Update all components
-    └── status.sh                      # Health check for all services
+    ├── install.sh
+    ├── setup-searxng.sh
+    ├── update.sh
+    └── status.sh
 ```
