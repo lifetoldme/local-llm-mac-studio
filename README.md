@@ -57,13 +57,13 @@ Configure Docker to find the Compose plugin:
 
 ```bash
 mkdir -p ~/.docker
-cat > ~/.docker/config.json << 'EOFJSON'
+cat > ~/.docker/config.json << 'EOF'
 {
   "cliPluginsExtraDirs": [
     "/opt/homebrew/lib/docker/cli-plugins"
   ]
 }
-EOFJSON
+EOF
 ```
 
 Point Docker at Colima's socket (add to `~/.zshrc`):
