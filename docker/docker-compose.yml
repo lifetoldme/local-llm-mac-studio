@@ -1,7 +1,7 @@
 services:
 
   # ============================================================
-  # Open WebUI - ChatGPT-style interface for llama.cpp
+  # Open WebUI - Chat interface for local OpenAI-compatible MLX endpoints
   # Access at: http://<SERVER-IP>:3000
   # ============================================================
   open-webui:
@@ -11,10 +11,10 @@ services:
     ports:
       - "3000:8080"
     environment:
-      # Point to llama.cpp running natively on the host
-      - OPENAI_API_BASE_URL=http://host.docker.internal:8080/v1
-      - OPENAI_API_KEY=none
-      # Disable Ollama since we're using llama.cpp directly
+      # Point to all mlx_lm.server instances running natively on the host
+      - OPENAI_API_BASE_URLS=http://host.docker.internal:8080/v1;http://host.docker.internal:8081/v1;http://host.docker.internal:8082/v1
+      - OPENAI_API_KEYS=none;none;none
+      # Disable Ollama since we're using OpenAI-compatible local endpoints directly
       - ENABLE_OLLAMA_API=false
       # Point ChromaDB at the companion container
       - CHROMA_HTTP_HOST=chromadb
@@ -31,7 +31,7 @@ services:
     volumes:
       - open-webui:/app/backend/data
     extra_hosts:
-      # Allows containers to reach llama.cpp on the host
+      # Allows containers to reach mlx_lm.server instances on the host
       - "host.docker.internal:host-gateway"
     depends_on:
       - chromadb

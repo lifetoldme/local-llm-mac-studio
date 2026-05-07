@@ -56,9 +56,14 @@ check_agent() {
   fi
 }
 
-check_agent "com.llamacpp.server"   "llama-server LaunchAgent"
-check_agent "com.colima.server"     "Colima LaunchAgent"
-check_agent "com.localllm.compose"  "Docker Compose LaunchAgent"  "true"
+check_agent "com.mlx.fast"       "MLX fast LaunchAgent"
+check_agent "com.mlx.reasoning"  "MLX reasoning LaunchAgent"
+check_agent "com.mlx.coding"     "MLX coding LaunchAgent"
+check_agent "com.colima.server"  "Colima LaunchAgent"
+check_agent "com.localllm.compose" "Docker Compose LaunchAgent"  "true"
+
+info "launchctl list | grep mlx"
+launchctl list | grep "mlx" 2>/dev/null || warn "No mlx LaunchAgents listed"
 
 echo ""
 
@@ -67,11 +72,25 @@ echo ""
 # --------------------------------------------------------------
 echo -e "${BOLD}Processes${NC}"
 
-if pgrep -x "llama-server" >/dev/null; then
-  PID=$(pgrep -x "llama-server")
-  pass "llama-server (PID $PID)"
+if pgrep -f "mlx_lm.server.*--port 8080" >/dev/null; then
+  PID=$(pgrep -f "mlx_lm.server.*--port 8080" | tr '\n' ' ')
+  pass "mlx_lm.server fast (PID $PID)"
 else
-  fail "llama-server — not running"
+  fail "mlx_lm.server fast — not running"
+fi
+
+if pgrep -f "mlx_lm.server.*--port 8081" >/dev/null; then
+  PID=$(pgrep -f "mlx_lm.server.*--port 8081" | tr '\n' ' ')
+  pass "mlx_lm.server reasoning (PID $PID)"
+else
+  fail "mlx_lm.server reasoning — not running"
+fi
+
+if pgrep -f "mlx_lm.server.*--port 8082" >/dev/null; then
+  PID=$(pgrep -f "mlx_lm.server.*--port 8082" | tr '\n' ' ')
+  pass "mlx_lm.server coding (PID $PID)"
+else
+  fail "mlx_lm.server coding — not running"
 fi
 
 COLIMA_STATUS=$(colima status 2>&1)
@@ -141,10 +160,11 @@ check_endpoint() {
   pass "$name — responding ($url)"
 }
 
-check_endpoint "llama.cpp API"   "http://localhost:8080/v1/models"        "model"
-check_endpoint "llama.cpp props" "http://localhost:8080/props"            "n_ctx"
-check_endpoint "ChromaDB"        "http://localhost:8000/api/v2/heartbeat" "heartbeat"
-check_endpoint "Open WebUI"      "http://localhost:3000"                  ""
+check_endpoint "MLX fast model API"      "http://localhost:8080/v1/models"        "model"
+check_endpoint "MLX reasoning model API" "http://localhost:8081/v1/models"        "model"
+check_endpoint "MLX coding model API"    "http://localhost:8082/v1/models"        "model"
+check_endpoint "ChromaDB"                "http://localhost:8000/api/v2/heartbeat" "heartbeat"
+check_endpoint "Open WebUI"              "http://localhost:3000"                  ""
 
 # SearXNG check — must be done from inside the Open WebUI container
 # since SearXNG is not exposed on the host network by default
@@ -159,36 +179,6 @@ elif [ -z "$SEARXNG_RESULT" ]; then
 else
   warn "SearXNG — responding but JSON format may not be enabled"
   info "Check: grep -A5 'formats:' ~/docker/local-llm/searxng/settings.yml"
-fi
-
-echo ""
-
-# --------------------------------------------------------------
-# llama.cpp configuration details
-# --------------------------------------------------------------
-echo -e "${BOLD}llama.cpp Configuration${NC}"
-
-props=$(curl -sf --max-time 5 http://localhost:8080/props 2>/dev/null)
-if [ -n "$props" ]; then
-  n_ctx=$(echo "$props" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-# /props returns per-slot context size, not total
-ctx = d.get('n_ctx') or d.get('default_generation_settings', {}).get('n_ctx') or 'unknown'
-print(ctx)
-" 2>/dev/null)
-  if [[ "$n_ctx" =~ ^[0-9]+$ ]]; then
-    info "Per-slot context:   $n_ctx tokens"
-    info "Total context:      $((n_ctx * 2)) tokens (with --parallel 2)"
-  else
-    info "Context size: unknown"
-  fi
-  model=$(curl -sf --max-time 5 http://localhost:8080/v1/models 2>/dev/null | \
-    python3 -c \
-    "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" 2>/dev/null)
-  info "Loaded model:       $model"
-else
-  warn "Could not reach llama.cpp props endpoint"
 fi
 
 echo ""
@@ -217,21 +207,23 @@ echo ""
 # --------------------------------------------------------------
 # Recent errors
 # --------------------------------------------------------------
-echo -e "${BOLD}Recent Errors (last 5 lines from server.error.log)${NC}"
+echo -e "${BOLD}Recent Errors (last 5 lines per mlx error log)${NC}"
 
-ERROR_LOG="/var/log/llamacpp/server.error.log"
-if [ -f "$ERROR_LOG" ]; then
-  errors=$(tail -n 20 "$ERROR_LOG" | grep -i "error\|failed\|fatal" | tail -n 5)
-  if [ -n "$errors" ]; then
-    echo "$errors" | while IFS= read -r line; do
-      warn "$line"
-    done
+for ERROR_LOG in /var/log/mlx/fast.error.log /var/log/mlx/reasoning.error.log /var/log/mlx/coding.error.log; do
+  if [ -f "$ERROR_LOG" ]; then
+    errors=$(tail -n 20 "$ERROR_LOG" | grep -i "error\|failed\|fatal" | tail -n 5)
+    if [ -n "$errors" ]; then
+      warn "$(basename "$ERROR_LOG")"
+      echo "$errors" | while IFS= read -r line; do
+        warn "$line"
+      done
+    else
+      pass "No recent errors in $(basename "$ERROR_LOG")"
+    fi
   else
-    pass "No recent errors in server.error.log"
+    warn "Log file not found: $ERROR_LOG"
   fi
-else
-  warn "Log file not found: $ERROR_LOG"
-fi
+done
 
 echo ""
 
@@ -240,11 +232,13 @@ echo ""
 # --------------------------------------------------------------
 HOST_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "unknown")
 echo -e "${BOLD}Network${NC}"
-info "Host IP:        $HOST_IP"
-info "Open WebUI:     http://$HOST_IP:3000"
-info "llama.cpp API:  http://$HOST_IP:8080/v1"
-info "ChromaDB:       http://$HOST_IP:8000"
-info "SearXNG:        internal only (uncomment ports in docker-compose.yml for browser access at :8081)"
+info "Host IP:           $HOST_IP"
+info "Open WebUI:        http://$HOST_IP:3000"
+info "MLX fast API:      http://$HOST_IP:8080/v1"
+info "MLX reasoning API: http://$HOST_IP:8081/v1"
+info "MLX coding API:    http://$HOST_IP:8082/v1"
+info "ChromaDB:          http://$HOST_IP:8000"
+info "SearXNG:           internal only (uncomment ports in docker-compose.yml for browser access at :8081)"
 
 echo ""
 echo -e "${BOLD}==============================================${NC}"

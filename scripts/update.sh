@@ -2,7 +2,7 @@
 # =============================================================
 # update.sh
 # Update all components of the local LLM stack
-# Usage: ./scripts/update.sh [--all | --llama | --docker | --colima]
+# Usage: ./scripts/update.sh [--all | --mlx | --docker | --colima]
 # With no arguments, updates everything.
 # =============================================================
 
@@ -25,23 +25,23 @@ export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_DIR=~/docker/local-llm
 
-UPDATE_LLAMA=false
+UPDATE_MLX=false
 UPDATE_DOCKER=false
 UPDATE_COLIMA=false
 
 # Parse arguments — default to all if none provided
 if [ $# -eq 0 ]; then
-  UPDATE_LLAMA=true
+  UPDATE_MLX=true
   UPDATE_DOCKER=true
   UPDATE_COLIMA=true
 else
   for arg in "$@"; do
     case $arg in
-      --all)    UPDATE_LLAMA=true; UPDATE_DOCKER=true; UPDATE_COLIMA=true ;;
-      --llama)  UPDATE_LLAMA=true ;;
+      --all)    UPDATE_MLX=true; UPDATE_DOCKER=true; UPDATE_COLIMA=true ;;
+      --mlx)    UPDATE_MLX=true ;;
       --docker) UPDATE_DOCKER=true ;;
       --colima) UPDATE_COLIMA=true ;;
-      *) log_error "Unknown argument: $arg. Use --all, --llama, --docker, or --colima" ;;
+      *) log_error "Unknown argument: $arg. Use --all, --mlx, --docker, or --colima" ;;
     esac
   done
 fi
@@ -53,25 +53,21 @@ echo "=============================================="
 echo ""
 
 # --------------------------------------------------------------
-# Update llama.cpp
+# Update mlx-lm
 # --------------------------------------------------------------
-if [ "$UPDATE_LLAMA" = true ]; then
-  echo "--- llama.cpp ---"
-  log_info "Checking for llama.cpp updates..."
+if [ "$UPDATE_MLX" = true ]; then
+  echo "--- mlx-lm ---"
+  log_info "Upgrading mlx-lm..."
 
-  BEFORE=$(brew info llama.cpp | grep "llama.cpp " | awk '{print $2}')
-  brew upgrade llama.cpp 2>/dev/null || log_warn "llama.cpp already at latest version"
-  AFTER=$(brew info llama.cpp | grep "llama.cpp " | awk '{print $2}')
+  python3 -m pip install --user --upgrade mlx-lm
 
-  if [ "$BEFORE" != "$AFTER" ]; then
-    log_info "Updated llama.cpp $BEFORE → $AFTER, reloading LaunchAgent..."
-    launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.llamacpp.server.plist 2>/dev/null || true
-    sleep 2
-    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.llamacpp.server.plist
-    log_success "llama-server reloaded"
-  else
-    log_success "llama.cpp already at latest version ($AFTER)"
-  fi
+  log_info "Reloading MLX LaunchAgents..."
+  for plist in com.mlx.fast.plist com.mlx.reasoning.plist com.mlx.coding.plist; do
+    launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/$plist" 2>/dev/null || true
+    sleep 1
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$plist"
+    log_success "$plist reloaded"
+  done
   echo ""
 fi
 
@@ -124,12 +120,6 @@ echo "=============================================="
 log_info "Waiting 10 seconds for services to settle..."
 sleep 10
 
-if pgrep -x "llama-server" >/dev/null; then
-  log_success "llama-server running"
-else
-  log_warn "llama-server NOT running — check /var/log/llamacpp/server.error.log"
-fi
-
 if colima status 2>/dev/null | grep -q "colima is running"; then
   log_success "Colima running"
 else
@@ -137,9 +127,21 @@ else
 fi
 
 if curl -sf http://localhost:8080/v1/models >/dev/null; then
-  log_success "llama.cpp API responding"
+  log_success "MLX fast model API responding"
 else
-  log_warn "llama.cpp API not responding"
+  log_warn "MLX fast model API not responding"
+fi
+
+if curl -sf http://localhost:8081/v1/models >/dev/null; then
+  log_success "MLX reasoning model API responding"
+else
+  log_warn "MLX reasoning model API not responding"
+fi
+
+if curl -sf http://localhost:8082/v1/models >/dev/null; then
+  log_success "MLX coding model API responding"
+else
+  log_warn "MLX coding model API not responding"
 fi
 
 if curl -sf http://localhost:8000/api/v2/heartbeat >/dev/null; then
