@@ -35,23 +35,42 @@ All three MLX servers expose OpenAI-compatible endpoints such as `/v1/chat/compl
 Install Homebrew packages:
 
 ```bash
-brew install colima docker docker-compose hf
+brew install colima docker docker-compose hf pipx
 ```
 
-Install MLX server tooling via pip:
+Install MLX server tooling via pipx:
 
 ```bash
-python3 -m pip install --user mlx-lm
+pipx install mlx-lm
+pipx ensurepath
+source ~/.zshrc
 ```
 
-> `mlx_lm.server` path can vary by Python setup. Verify with:
->
-> ```bash
-> which mlx_lm.server
-> python3 -m mlx_lm.server --help
-> ```
->
-> LaunchAgent plists in this repo default to `/usr/local/bin/mlx_lm.server`. Update if your path differs.
+> **Why pipx?** macOS 13+ protects the system Python environment from direct `pip install` calls (PEP 668). `pipx` is the recommended solution — it installs Python applications into isolated virtual environments and symlinks the binaries onto your PATH automatically.
+
+After installation, verify the binary path:
+
+```bash
+which mlx_lm.server
+```
+
+The path will typically be something like `/Users/<you>/.local/bin/mlx_lm.server`. The LaunchAgent plists in this repo default to `/usr/local/bin/mlx_lm.server`. If your path differs, run the following to update all three plists before bootstrapping them:
+
+```bash
+MLX_PATH=$(which mlx_lm.server)
+sed -i '' "s|/usr/local/bin/mlx_lm.server|$MLX_PATH|g" \
+  ~/Library/LaunchAgents/com.mlx.fast.plist \
+  ~/Library/LaunchAgents/com.mlx.reasoning.plist \
+  ~/Library/LaunchAgents/com.mlx.coding.plist
+```
+
+Verify the substitution:
+
+```bash
+grep -A3 "ProgramArguments" ~/Library/LaunchAgents/com.mlx.fast.plist
+```
+
+The first `<string>` inside `<array>` should show your actual path.
 
 Configure Docker to find the Compose plugin:
 
@@ -89,13 +108,18 @@ chmod +x scripts/*.sh
 
 ### 2. Download models
 
+All three models can be chained into a single command. Total download is ~20GB:
+
 ```bash
 sudo mkdir -p /opt/models
 sudo chown $(whoami) /opt/models
 
-hf download mlx-community/Qwen2.5-3B-Instruct-4bit --local-dir /opt/models/qwen2.5-3b
-hf download mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit --local-dir /opt/models/deepseek-r1-14b
-hf download mlx-community/Qwen2.5-Coder-14B-Instruct-4bit --local-dir /opt/models/qwen2.5-coder-14b
+hf download mlx-community/Qwen2.5-3B-Instruct-4bit \
+  --local-dir /opt/models/qwen2.5-3b && \
+hf download mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit \
+  --local-dir /opt/models/deepseek-r1-14b && \
+hf download mlx-community/Qwen2.5-Coder-14B-Instruct-4bit \
+  --local-dir /opt/models/qwen2.5-coder-14b
 ```
 
 ### 3. Run the install script
@@ -138,6 +162,11 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<plist>.plist
 launchctl list | grep -E "mlx|colima|localllm"
 ```
 
+> **macOS 26 note:** Use `launchctl bootstrap` not `launchctl load`. If bootstrap fails with error 5, strip extended attributes:
+> ```bash
+> xattr -c ~/Library/LaunchAgents/<plist>.plist
+> ```
+
 ---
 
 ## Configuration
@@ -174,6 +203,23 @@ curl http://localhost:<port>/v1/models
 | Reasoning | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | ~9GB | 8081 |
 | Coding | `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` | ~9GB | 8082 |
 
+### Colima resources
+
+Colima is configured with 4 CPUs, 8GB RAM, and 60GB disk. To adjust:
+
+```bash
+colima stop
+colima start --cpu 4 --memory 8 --disk 60
+```
+
+### SearXNG
+
+Config lives at `~/docker/local-llm/searxng/settings.yml`. To add or remove search engines, edit the `engines` list and restart:
+
+```bash
+docker compose -f ~/docker/local-llm/docker-compose.yml restart searxng
+```
+
 ---
 
 ## Open WebUI Connections
@@ -183,28 +229,29 @@ curl http://localhost:<port>/v1/models
 - `OPENAI_API_BASE_URLS=http://host.docker.internal:8080/v1;http://host.docker.internal:8081/v1;http://host.docker.internal:8082/v1`
 - `OPENAI_API_KEYS=none;none;none`
 
-Open WebUI will discover all three endpoints and expose model selection via the model picker per conversation.
-You can also manage endpoints in **Admin → Connections**.
+Open WebUI will discover all three endpoints and expose model selection via the model picker per conversation. You can also manage endpoints in **Admin → Connections**.
 
 ---
 
 ## Per-app routing guide
 
-- **Home Assistant** → `http://<HOST_IP>:8080/v1` (fast, low latency)
-- **Open WebUI** → default to `:8081`, optionally select coding models from `:8082`
-- **opencode / JetBrains** → `http://<HOST_IP>:8082/v1`
-- **Log monitoring/analysis** → `http://<HOST_IP>:8081/v1`
+| App | Endpoint | Reason |
+|---|---|---|
+| **Home Assistant** | `http://<HOST_IP>:8080/v1` | Fast, low-latency responses |
+| **Open WebUI** | `:8081` default, `:8082` selectable | Reasoning for general chat, coding on demand |
+| **opencode / JetBrains** | `http://<HOST_IP>:8082/v1` | Coding-optimised model |
+| **Log monitoring/analysis** | `http://<HOST_IP>:8081/v1` | Reasoning model for anomaly detection |
 
 ---
 
 ## Maintenance
 
 ```bash
-./scripts/status.sh
-./scripts/update.sh
-./scripts/update.sh --mlx
-./scripts/update.sh --docker
-./scripts/update.sh --colima
+./scripts/status.sh              # Health check all services
+./scripts/update.sh              # Update everything
+./scripts/update.sh --mlx        # Update mlx-lm only
+./scripts/update.sh --docker     # Update Open WebUI, ChromaDB, SearXNG only
+./scripts/update.sh --colima     # Update Colima only
 ```
 
 ---
@@ -227,14 +274,52 @@ You can also manage endpoints in **Admin → Connections**.
 
 ## Troubleshooting
 
-### Find the `mlx_lm.server` binary path
+### `pip install mlx-lm` fails with "externally-managed-environment"
+
+macOS 13+ (and Homebrew Python) block direct `pip install` calls to protect the system environment (PEP 668). Use `pipx` instead:
 
 ```bash
-which mlx_lm.server
-python3 -m mlx_lm.server --help
+brew install pipx
+pipx install mlx-lm
+pipx ensurepath
+source ~/.zshrc
 ```
 
-If needed, update `/usr/local/bin/mlx_lm.server` in each plist and reload with `launchctl`.
+### LaunchAgents fail — wrong `mlx_lm.server` path
+
+The plists default to `/usr/local/bin/mlx_lm.server`. If `pipx` installed it elsewhere (commonly `~/.local/bin/`), update all three plists:
+
+```bash
+MLX_PATH=$(which mlx_lm.server)
+sed -i '' "s|/usr/local/bin/mlx_lm.server|$MLX_PATH|g" \
+  ~/Library/LaunchAgents/com.mlx.fast.plist \
+  ~/Library/LaunchAgents/com.mlx.reasoning.plist \
+  ~/Library/LaunchAgents/com.mlx.coding.plist
+```
+
+Verify:
+
+```bash
+grep -A3 "ProgramArguments" ~/Library/LaunchAgents/com.mlx.fast.plist
+```
+
+Then reload the agents:
+
+```bash
+for plist in com.mlx.fast com.mlx.reasoning com.mlx.coding; do
+  launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/$plist.plist 2>/dev/null || true
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/$plist.plist
+done
+```
+
+### launchctl bootstrap fails with error 5
+
+Known issue on macOS 26 (Tahoe). Fix:
+
+```bash
+xattr -c ~/Library/LaunchAgents/<plist>.plist
+sudo chown $(whoami) /var/log/mlx/
+```
 
 ### Model download issues
 
@@ -251,7 +336,7 @@ lsof -nP -iTCP:8081 -sTCP:LISTEN
 lsof -nP -iTCP:8082 -sTCP:LISTEN
 ```
 
-Stop conflicting process, then reload the affected LaunchAgent.
+Stop the conflicting process, then reload the affected LaunchAgent.
 
 ### Open WebUI cannot reach MLX servers
 
@@ -267,12 +352,34 @@ docker exec open-webui curl http://host.docker.internal:8081/v1/models
 docker exec open-webui curl http://host.docker.internal:8082/v1/models
 ```
 
-If container checks fail, verify this entry exists in compose:
+If container checks fail, verify this entry exists in `docker/docker-compose.yml`:
 
 ```yaml
 extra_hosts:
   - "host.docker.internal:host-gateway"
 ```
+
+### SearXNG not returning results in Open WebUI
+
+```bash
+docker exec open-webui curl -sf "http://searxng:8080/search?q=test&format=json"
+docker logs searxng
+grep -A5 "formats:" ~/docker/local-llm/searxng/settings.yml
+```
+
+If `settings.yml` is missing or corrupted, re-run `./scripts/setup-searxng.sh`.
+
+### Docker commands fail — socket not found
+
+```bash
+export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
+```
+
+Add permanently to `~/.zshrc` if missing.
+
+### `docker compose` not found
+
+Ensure `~/.docker/config.json` has the `cliPluginsExtraDirs` entry pointing to `/opt/homebrew/lib/docker/cli-plugins`.
 
 ---
 
