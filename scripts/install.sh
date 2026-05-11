@@ -35,7 +35,7 @@ log_info "Checking prerequisites..."
 
 command -v brew >/dev/null 2>&1 || log_error "Homebrew is not installed. Install it first: https://brew.sh"
 
-for pkg in colima docker docker-compose hf; do
+for pkg in colima docker docker-compose hf pipx; do
   if ! brew list "$pkg" &>/dev/null; then
     log_info "Installing $pkg via Homebrew..."
     brew install "$pkg"
@@ -44,13 +44,36 @@ for pkg in colima docker docker-compose hf; do
   fi
 done
 
-if ! command -v python3 >/dev/null 2>&1; then
-  log_error "python3 is not installed. Install it first via Homebrew: brew install python"
+log_info "Installing mlx-lm via pipx..."
+# pipx manages its own isolated venv — avoids PEP 668 externally-managed-environment errors
+if pipx list | grep -q "mlx-lm"; then
+  pipx upgrade mlx-lm
+  log_success "mlx-lm upgraded"
+else
+  pipx install mlx-lm
+  pipx ensurepath
+  log_success "mlx-lm installed"
 fi
 
-log_info "Installing/upgrading mlx-lm via pip..."
-python3 -m pip install --user --upgrade mlx-lm
-log_success "mlx-lm installed/updated"
+# Verify binary is on PATH
+if ! command -v mlx_lm.server >/dev/null 2>&1; then
+  log_warn "mlx_lm.server not found on PATH. You may need to run: pipx ensurepath && source ~/.zshrc"
+  log_warn "Then re-run this script, or manually update the LaunchAgent plists with the correct path."
+else
+  log_success "mlx_lm.server found at: $(which mlx_lm.server)"
+fi
+
+# Update LaunchAgent plists if the binary path differs from the default
+MLX_PATH="$(which mlx_lm.server 2>/dev/null || true)"
+DEFAULT_PATH="/usr/local/bin/mlx_lm.server"
+
+if [ -n "$MLX_PATH" ] && [ "$MLX_PATH" != "$DEFAULT_PATH" ]; then
+  log_info "Updating LaunchAgent plists with mlx_lm.server path: $MLX_PATH"
+  for plist in com.mlx.fast.plist com.mlx.reasoning.plist com.mlx.coding.plist; do
+    sed -i '' "s|$DEFAULT_PATH|$MLX_PATH|g" "$REPO_DIR/launchagents/$plist"
+  done
+  log_success "Plist paths updated"
+fi
 
 # --------------------------------------------------------------
 # 2. Create required directories
