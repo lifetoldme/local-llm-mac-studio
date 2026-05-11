@@ -57,9 +57,9 @@ echo ""
 # --------------------------------------------------------------
 if [ "$UPDATE_MLX" = true ]; then
   echo "--- mlx-lm ---"
-  log_info "Upgrading mlx-lm..."
+  log_info "Upgrading mlx-lm via pipx..."
 
-  python3 -m pip install --user --upgrade mlx-lm
+  pipx upgrade mlx-lm
 
   log_info "Reloading MLX LaunchAgents..."
   for plist in com.mlx.fast.plist com.mlx.reasoning.plist com.mlx.coding.plist; do
