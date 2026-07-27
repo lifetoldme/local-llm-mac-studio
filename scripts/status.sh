@@ -58,7 +58,25 @@ check_agent() {
 
 check_agent "com.mlx.fast"       "MLX fast LaunchAgent"
 check_agent "com.mlx.indepth"    "MLX indepth LaunchAgent"
-check_agent "com.colima.server"  "Colima LaunchAgent"
+
+# Colima agent: exit code 78 is normal when Colima was already started by another process
+colima_result=$(launchctl list | grep "com.colima.server" 2>/dev/null)
+if [ -z "$colima_result" ]; then
+  fail "Colima LaunchAgent — not registered"
+else
+  colima_pid=$(echo "$colima_result" | awk '{print $1}')
+  colima_exit=$(echo "$colima_result" | awk '{print $2}')
+  if [ "$colima_pid" != "-" ]; then
+    pass "Colima LaunchAgent — running (PID $colima_pid)"
+  elif [ "$colima_exit" = "78" ] && colima status 2>/dev/null | grep -q "colima is running"; then
+    warn "Colima LaunchAgent — idle (Colima already running, exit 78 is benign)"
+  elif [ "$colima_exit" = "0" ]; then
+    warn "Colima LaunchAgent — registered, not running (last exit: 0)"
+  else
+    fail "Colima LaunchAgent — crashed (last exit code: $colima_exit)"
+  fi
+fi
+
 check_agent "com.localllm.compose" "Docker Compose LaunchAgent"  "true"
 
 info "launchctl list | grep mlx"

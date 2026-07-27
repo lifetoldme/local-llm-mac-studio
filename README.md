@@ -143,10 +143,10 @@ hf download mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit \
 LaunchAgents in `~/Library/LaunchAgents/`:
 
 | Plist | Role | Model | Port | Behavior |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-8B-4bit` | 8080 | Persistent, restarts on crash |
 | `com.mlx.indepth.plist` | In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | 8081 | Persistent, restarts on crash |
-| `com.colima.server.plist` | Docker VM | Colima | n/a | Persistent, restarts on crash |
+| `com.colima.server.plist` | Docker VM | Colima | n/a | Checks if running, sleeps if already up |
 | `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | One-shot compose up |
 
 Manage LaunchAgents:
@@ -259,6 +259,10 @@ Open WebUI will discover both endpoints and expose model selection via the model
 | MLX fast stderr | `/var/log/mlx/fast.error.log` |
 | MLX indepth stdout | `/var/log/mlx/indepth.log` |
 | MLX indepth stderr | `/var/log/mlx/indepth.error.log` |
+| Colima stdout | `/var/log/mlx/colima.log` |
+| Colima stderr | `/var/log/mlx/colima.error.log` |
+| Docker Compose stdout | `/var/log/mlx/compose.log` |
+| Docker Compose stderr | `/var/log/mlx/compose.error.log` |
 | Open WebUI | `docker logs open-webui` |
 | ChromaDB | `docker logs chromadb` |
 | SearXNG | `docker logs searxng` |

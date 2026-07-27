@@ -7,18 +7,18 @@
   <string>com.colima.server</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/colima</string>
-    <string>start</string>
-    <string>--foreground</string>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>if ! /opt/homebrew/bin/colima status 2&gt;/dev/null | grep -q 'colima is running'; then exec /opt/homebrew/bin/colima start --foreground; else exec /bin/sleep infinity; fi</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/var/log/llamacpp/colima.log</string>
+  <string>/var/log/mlx/colima.log</string>
   <key>StandardErrorPath</key>
-  <string>/var/log/llamacpp/colima.error.log</string>
+  <string>/var/log/mlx/colima.error.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>

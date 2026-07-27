@@ -14,9 +14,9 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/var/log/llamacpp/compose.log</string>
+  <string>/var/log/mlx/compose.log</string>
   <key>StandardErrorPath</key>
-  <string>/var/log/llamacpp/compose.error.log</string>
+  <string>/var/log/mlx/compose.error.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
