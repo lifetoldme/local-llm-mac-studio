@@ -146,7 +146,7 @@ LaunchAgents in `~/Library/LaunchAgents/`:
 |---|---|---|---|---|---|
 | `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-8B-4bit` | 8080 | Persistent, restarts on crash |
 | `com.mlx.indepth.plist` | In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | 8081 | Persistent, restarts on crash |
-| `com.colima.server.plist` | Docker VM | Colima | n/a | Checks if running, sleeps if already up |
+| `com.colima.server.plist` | Docker VM | Colima | n/a | `colima start --foreground`, restarts on crash |
 | `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | One-shot compose up |
 
 Manage LaunchAgents:
@@ -391,7 +391,6 @@ local-llm-mac-studio/
 ├── searxng/
 │   └── settings.yml
 └── scripts/
-    ├── colima-watchdog.sh
     ├── install.sh
     ├── setup-searxng.sh
     ├── update.sh
