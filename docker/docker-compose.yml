@@ -12,8 +12,8 @@ services:
       - "3000:8080"
     environment:
       # Point to all mlx_lm.server instances running natively on the host
-      - OPENAI_API_BASE_URLS=http://host.docker.internal:8080/v1;http://host.docker.internal:8081/v1;http://host.docker.internal:8082/v1
-      - OPENAI_API_KEYS=none;none;none
+      - OPENAI_API_BASE_URLS=http://host.docker.internal:8080/v1;http://host.docker.internal:8081/v1
+      - OPENAI_API_KEYS=none;none
       # Disable Ollama since we're using OpenAI-compatible local endpoints directly
       - ENABLE_OLLAMA_API=false
       # Point ChromaDB at the companion container
