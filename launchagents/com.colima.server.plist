@@ -9,7 +9,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>if ! /opt/homebrew/bin/colima status 2&gt;/dev/null | grep -q 'colima is running'; then exec /opt/homebrew/bin/colima start --foreground; else exec /bin/sleep infinity; fi</string>
+    <string>if ! /opt/homebrew/bin/colima status 2&gt;/dev/null | grep -q 'colima is running'; then exec /opt/homebrew/bin/colima start --foreground; else while :; do sleep 86400; done; fi</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
