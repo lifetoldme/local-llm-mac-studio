@@ -62,7 +62,7 @@ if [ "$UPDATE_MLX" = true ]; then
   pipx upgrade mlx-lm
 
   log_info "Reloading MLX LaunchAgents..."
-  for plist in com.mlx.fast.plist com.mlx.reasoning.plist com.mlx.coding.plist; do
+  for plist in com.mlx.fast.plist com.mlx.indepth.plist; do
     launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/$plist" 2>/dev/null || true
     sleep 1
     launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$plist"
@@ -133,15 +133,9 @@ else
 fi
 
 if curl -sf http://localhost:8081/v1/models >/dev/null; then
-  log_success "MLX reasoning model API responding"
+  log_success "MLX indepth model API responding"
 else
-  log_warn "MLX reasoning model API not responding"
-fi
-
-if curl -sf http://localhost:8082/v1/models >/dev/null; then
-  log_success "MLX coding model API responding"
-else
-  log_warn "MLX coding model API not responding"
+  log_warn "MLX indepth model API not responding"
 fi
 
 if curl -sf http://localhost:8000/api/v2/heartbeat >/dev/null; then

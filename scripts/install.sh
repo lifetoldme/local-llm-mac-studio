@@ -69,7 +69,7 @@ DEFAULT_PATH="/usr/local/bin/mlx_lm.server"
 
 if [ -n "$MLX_PATH" ] && [ "$MLX_PATH" != "$DEFAULT_PATH" ]; then
   log_info "Updating LaunchAgent plists with mlx_lm.server path: $MLX_PATH"
-  for plist in com.mlx.fast.plist com.mlx.reasoning.plist com.mlx.coding.plist; do
+  for plist in com.mlx.fast.plist com.mlx.indepth.plist; do
     sed -i '' "s|$DEFAULT_PATH|$MLX_PATH|g" "$REPO_DIR/launchagents/$plist"
   done
   log_success "Plist paths updated"
@@ -141,8 +141,7 @@ log_info "Installing LaunchAgents..."
 
 PLISTS=(
   "com.mlx.fast.plist"
-  "com.mlx.reasoning.plist"
-  "com.mlx.coding.plist"
+  "com.mlx.indepth.plist"
   "com.colima.server.plist"
   "com.localllm.compose.plist"
 )
@@ -221,15 +220,9 @@ else
 fi
 
 if curl -sf http://localhost:8081/v1/models >/dev/null; then
-  log_success "MLX reasoning model API responding on :8081"
+  log_success "MLX indepth model API responding on :8081"
 else
-  log_warn "MLX reasoning model API not responding — model may still be loading"
-fi
-
-if curl -sf http://localhost:8082/v1/models >/dev/null; then
-  log_success "MLX coding model API responding on :8082"
-else
-  log_warn "MLX coding model API not responding — model may still be loading"
+  log_warn "MLX indepth model API not responding — model may still be loading"
 fi
 
 # ChromaDB
@@ -252,8 +245,7 @@ echo "  Install complete!"
 echo ""
 echo "  Open WebUI:         http://$(ipconfig getifaddr en0):3000"
 echo "  MLX fast API:       http://$(ipconfig getifaddr en0):8080/v1"
-echo "  MLX reasoning API:  http://$(ipconfig getifaddr en0):8081/v1"
-echo "  MLX coding API:     http://$(ipconfig getifaddr en0):8082/v1"
+echo "  MLX indepth API:    http://$(ipconfig getifaddr en0):8081/v1"
 echo "  ChromaDB:           http://$(ipconfig getifaddr en0):8000"
 echo ""
 echo "  Remember to enable auto-login for headless boot:"

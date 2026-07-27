@@ -57,8 +57,7 @@ check_agent() {
 }
 
 check_agent "com.mlx.fast"       "MLX fast LaunchAgent"
-check_agent "com.mlx.reasoning"  "MLX reasoning LaunchAgent"
-check_agent "com.mlx.coding"     "MLX coding LaunchAgent"
+check_agent "com.mlx.indepth"    "MLX indepth LaunchAgent"
 check_agent "com.colima.server"  "Colima LaunchAgent"
 check_agent "com.localllm.compose" "Docker Compose LaunchAgent"  "true"
 
@@ -81,16 +80,9 @@ fi
 
 if pgrep -f "mlx_lm.server.*--port 8081" >/dev/null; then
   PID=$(pgrep -f "mlx_lm.server.*--port 8081" | tr '\n' ' ')
-  pass "mlx_lm.server reasoning (PID $PID)"
+  pass "mlx_lm.server indepth (PID $PID)"
 else
-  fail "mlx_lm.server reasoning — not running"
-fi
-
-if pgrep -f "mlx_lm.server.*--port 8082" >/dev/null; then
-  PID=$(pgrep -f "mlx_lm.server.*--port 8082" | tr '\n' ' ')
-  pass "mlx_lm.server coding (PID $PID)"
-else
-  fail "mlx_lm.server coding — not running"
+  fail "mlx_lm.server indepth — not running"
 fi
 
 COLIMA_STATUS=$(colima status 2>&1)
@@ -161,8 +153,7 @@ check_endpoint() {
 }
 
 check_endpoint "MLX fast model API"      "http://localhost:8080/v1/models"        "model"
-check_endpoint "MLX reasoning model API" "http://localhost:8081/v1/models"        "model"
-check_endpoint "MLX coding model API"    "http://localhost:8082/v1/models"        "model"
+check_endpoint "MLX indepth model API"   "http://localhost:8081/v1/models"        "model"
 check_endpoint "ChromaDB"                "http://localhost:8000/api/v2/heartbeat" "heartbeat"
 check_endpoint "Open WebUI"              "http://localhost:3000"                  ""
 
@@ -209,7 +200,7 @@ echo ""
 # --------------------------------------------------------------
 echo -e "${BOLD}Recent Errors (last 5 lines per mlx error log)${NC}"
 
-for ERROR_LOG in /var/log/mlx/fast.error.log /var/log/mlx/reasoning.error.log /var/log/mlx/coding.error.log; do
+for ERROR_LOG in /var/log/mlx/fast.error.log /var/log/mlx/indepth.error.log; do
   if [ -f "$ERROR_LOG" ]; then
     errors=$(tail -n 20 "$ERROR_LOG" | grep -i "error\|failed\|fatal" | tail -n 5)
     if [ -n "$errors" ]; then
@@ -235,8 +226,7 @@ echo -e "${BOLD}Network${NC}"
 info "Host IP:           $HOST_IP"
 info "Open WebUI:        http://$HOST_IP:3000"
 info "MLX fast API:      http://$HOST_IP:8080/v1"
-info "MLX reasoning API: http://$HOST_IP:8081/v1"
-info "MLX coding API:    http://$HOST_IP:8082/v1"
+info "MLX indepth API:   http://$HOST_IP:8081/v1"
 info "ChromaDB:          http://$HOST_IP:8000"
 info "SearXNG:           internal only (uncomment ports in docker-compose.yml for browser access at :8081)"
 
