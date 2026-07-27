@@ -391,6 +391,7 @@ local-llm-mac-studio/
 ├── searxng/
 │   └── settings.yml
 └── scripts/
+    ├── colima-watchdog.sh
     ├── install.sh
     ├── setup-searxng.sh
     ├── update.sh

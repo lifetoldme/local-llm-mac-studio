@@ -90,6 +90,10 @@ log_success "~/Library/LaunchAgents exists"
 mkdir -p "$COMPOSE_DIR"
 log_success "$COMPOSE_DIR created"
 
+# Ensure watchdog script is executable
+chmod +x "$REPO_DIR/scripts/colima-watchdog.sh"
+log_success "colima-watchdog.sh is executable"
+
 # --------------------------------------------------------------
 # 3. Configure Docker plugin path
 # --------------------------------------------------------------
