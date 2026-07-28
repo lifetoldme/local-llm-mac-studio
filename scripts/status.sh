@@ -59,21 +59,26 @@ check_agent() {
 check_agent "com.mlx.fast"       "MLX fast LaunchAgent"
 check_agent "com.mlx.indepth"    "MLX indepth LaunchAgent"
 
-# Colima agent: exit code 78 is normal when Colima was already started by another process
+# Colima agent: runs periodically via StartInterval; check actual Colima state
 colima_result=$(launchctl list | grep "com.colima.server" 2>/dev/null)
-if [ -z "$colima_result" ]; then
-  fail "Colima LaunchAgent — not registered"
-else
-  colima_pid=$(echo "$colima_result" | awk '{print $1}')
-  colima_exit=$(echo "$colima_result" | awk '{print $2}')
-  if [ "$colima_pid" != "-" ]; then
-    pass "Colima LaunchAgent — running (PID $colima_pid)"
-  elif [ "$colima_exit" = "78" ] && colima status 2>/dev/null | grep -q "colima is running"; then
-    warn "Colima LaunchAgent — idle (Colima already running, exit 78 is benign)"
-  elif [ "$colima_exit" = "0" ]; then
-    warn "Colima LaunchAgent — registered, not running (last exit: 0)"
+colima_running=$(colima status 2>/dev/null | grep -q "colima is running" && echo "yes" || echo "no")
+if [ "$colima_running" = "yes" ]; then
+  if [ -n "$colima_result" ]; then
+    colima_pid=$(echo "$colima_result" | awk '{print $1}')
+    if [ "$colima_pid" != "-" ]; then
+      pass "Colima LaunchAgent — running (PID $colima_pid)"
+    else
+      pass "Colima LaunchAgent — interval check active (Colima is running)"
+    fi
   else
-    fail "Colima LaunchAgent — crashed (last exit code: $colima_exit)"
+    fail "Colima LaunchAgent — not registered (but Colima is running)"
+  fi
+else
+  if [ -z "$colima_result" ]; then
+    fail "Colima LaunchAgent — not registered (Colima is NOT running)"
+  else
+    colima_exit=$(echo "$colima_result" | awk '{print $2}')
+    fail "Colima LaunchAgent — exit $colima_exit (Colima is NOT running)"
   fi
 fi
 

@@ -7,15 +7,13 @@
   <string>com.colima.server</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/colima</string>
-    <string>start</string>
-    <string>--foreground</string>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>/opt/homebrew/bin/colima status 2&gt;/dev/null | grep -q 'colima is running' || /opt/homebrew/bin/colima start</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ThrottleInterval</key>
+  <key>StartInterval</key>
   <integer>300</integer>
   <key>StandardOutPath</key>
   <string>/var/log/mlx/colima.log</string>

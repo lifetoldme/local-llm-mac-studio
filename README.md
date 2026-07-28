@@ -146,7 +146,7 @@ LaunchAgents in `~/Library/LaunchAgents/`:
 |---|---|---|---|---|---|
 | `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-8B-4bit` | 8080 | Persistent, restarts on crash |
 | `com.mlx.indepth.plist` | In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | 8081 | Persistent, restarts on crash |
-| `com.colima.server.plist` | Docker VM | Colima | n/a | `colima start --foreground`, restarts on crash |
+| `com.colima.server.plist` | Docker VM | Colima | n/a | Interval check every 5 min |
 | `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | One-shot compose up |
 
 Manage LaunchAgents:
