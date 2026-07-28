@@ -9,7 +9,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>/opt/homebrew/bin/colima status 2&gt;/dev/null | grep -q 'colima is running' || /opt/homebrew/bin/colima start</string>
+    <string>/opt/homebrew/bin/colima status 2&gt;/dev/null | grep -q 'colima is running' || { /opt/homebrew/bin/colima start; until /opt/homebrew/bin/colima status 2&gt;/dev/null | grep -q 'colima is running'; do sleep 2; done; }</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

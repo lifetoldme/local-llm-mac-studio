@@ -62,6 +62,11 @@ check_agent "com.mlx.indepth"    "MLX indepth LaunchAgent"
 # Colima agent: runs periodically via StartInterval; check actual Colima state
 colima_result=$(launchctl list | grep "com.colima.server" 2>/dev/null)
 colima_running=$(colima status 2>/dev/null | grep -q "colima is running" && echo "yes" || echo "no")
+# Retry once — Colima may be mid-startup
+if [ "$colima_running" = "no" ]; then
+  sleep 3
+  colima_running=$(colima status 2>/dev/null | grep -q "colima is running" && echo "yes" || echo "no")
+fi
 if [ "$colima_running" = "yes" ]; then
   if [ -n "$colima_result" ]; then
     colima_pid=$(echo "$colima_result" | awk '{print $1}')
