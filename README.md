@@ -374,6 +374,23 @@ Add permanently to `~/.zshrc` if missing.
 
 Ensure `~/.docker/config.json` has the `cliPluginsExtraDirs` entry pointing to `/opt/homebrew/lib/docker/cli-plugins`.
 
+### `docker` CLI missing after a Homebrew upgrade
+
+A `brew upgrade` can leave the `docker` formula installed in the Cellar but unlinked from `/opt/homebrew/bin/` (often because `docker-completion` owns conflicting completion symlinks). `status.sh` then reports every container as "not found" and SearXNG as "not responding" even though the stack is healthy.
+
+Fix:
+
+```bash
+brew link --overwrite docker
+```
+
+Verify:
+
+```bash
+which docker          # → /opt/homebrew/bin/docker
+docker version
+```
+
 ---
 
 ## Repository Structure

@@ -6,6 +6,7 @@
 # =============================================================
 
 export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 # Derive paths dynamically — works from any clone location
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,6 +23,9 @@ pass() { echo -e "  ${GREEN}✔${NC}  $1"; }
 fail() { echo -e "  ${RED}✘${NC}  $1"; }
 warn() { echo -e "  ${YELLOW}!${NC}  $1"; }
 info() { echo -e "  ${BLUE}→${NC}  $1"; }
+
+# Returns 0 if the given command is available on PATH
+have() { command -v "$1" >/dev/null 2>&1; }
 
 echo ""
 echo -e "${BOLD}=============================================="
@@ -59,13 +63,18 @@ check_agent() {
 check_agent "com.mlx.fast"       "MLX fast LaunchAgent"
 check_agent "com.mlx.indepth"    "MLX indepth LaunchAgent"
 
-# Colima agent: runs periodically via StartInterval; check actual Colima state
+# Colima agent: runs periodically via StartInterval; check actual Colima state.
+# NOTE: `colima status` writes its "colima is running" line to STDERR, so we must
+# redirect 2>&1 (not 2>/dev/null) or the grep below will never match.
+# Capture once here and reuse in the Processes section to avoid a duplicate call.
 colima_result=$(launchctl list | grep "com.colima.server" 2>/dev/null)
-colima_running=$(colima status 2>/dev/null | grep -q "colima is running" && echo "yes" || echo "no")
+COLIMA_STATUS=$(colima status 2>&1)
+colima_running=$(echo "$COLIMA_STATUS" | grep -q "colima is running" && echo "yes" || echo "no")
 # Retry once — Colima may be mid-startup
 if [ "$colima_running" = "no" ]; then
   sleep 3
-  colima_running=$(colima status 2>/dev/null | grep -q "colima is running" && echo "yes" || echo "no")
+  COLIMA_STATUS=$(colima status 2>&1)
+  colima_running=$(echo "$COLIMA_STATUS" | grep -q "colima is running" && echo "yes" || echo "no")
 fi
 if [ "$colima_running" = "yes" ]; then
   if [ -n "$colima_result" ]; then
@@ -113,7 +122,7 @@ else
   fail "mlx_lm.server indepth — not running"
 fi
 
-COLIMA_STATUS=$(colima status 2>&1)
+# Reuse the COLIMA_STATUS captured in the LaunchAgents section above
 if echo "$COLIMA_STATUS" | grep -q "colima is running"; then
   pass "Colima VM"
   info "$(echo "$COLIMA_STATUS" | grep 'arch:' | sed 's/.*msg=//' | tr -d '"')"
@@ -149,9 +158,14 @@ check_container() {
 }
 
 if echo "$COLIMA_STATUS" | grep -q "colima is running"; then
-  check_container "open-webui"
-  check_container "chromadb"
-  check_container "searxng"
+  if ! have docker; then
+    fail "docker CLI not found on PATH — run: brew link docker"
+    info "Skipping container checks"
+  else
+    check_container "open-webui"
+    check_container "chromadb"
+    check_container "searxng"
+  fi
 else
   warn "Skipping container checks — Colima is not running"
 fi
@@ -188,16 +202,22 @@ check_endpoint "Open WebUI"              "http://localhost:3000"                
 # SearXNG check — must be done from inside the Open WebUI container
 # since SearXNG is not exposed on the host network by default
 echo -ne "  "
-SEARXNG_RESULT=$(docker exec open-webui \
-  curl -sf --max-time 5 "http://searxng:8080/search?q=test&format=json" 2>/dev/null || echo "")
-
-if echo "$SEARXNG_RESULT" | grep -qE '"results"|"query"'; then
-  pass "SearXNG — responding (JSON search working)"
-elif [ -z "$SEARXNG_RESULT" ]; then
-  fail "SearXNG — not responding from Open WebUI container"
+if ! have docker; then
+  fail "SearXNG — cannot check (docker CLI not found on PATH)"
+elif ! docker inspect open-webui >/dev/null 2>&1; then
+  fail "SearXNG — cannot check (open-webui container not found)"
 else
-  warn "SearXNG — responding but JSON format may not be enabled"
-  info "Check: grep -A5 'formats:' ~/docker/local-llm/searxng/settings.yml"
+  SEARXNG_RESULT=$(docker exec open-webui \
+    curl -sf --max-time 5 "http://searxng:8080/search?q=test&format=json" 2>/dev/null || echo "")
+
+  if echo "$SEARXNG_RESULT" | grep -qE '"results"|"query"'; then
+    pass "SearXNG — responding (JSON search working)"
+  elif [ -z "$SEARXNG_RESULT" ]; then
+    fail "SearXNG — not responding from Open WebUI container"
+  else
+    warn "SearXNG — responding but JSON format may not be enabled"
+    info "Check: grep -A5 'formats:' ~/docker/local-llm/searxng/settings.yml"
+  fi
 fi
 
 echo ""
