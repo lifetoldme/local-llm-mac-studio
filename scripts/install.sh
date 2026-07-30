@@ -63,17 +63,9 @@ else
   log_success "mlx_lm.server found at: $(which mlx_lm.server)"
 fi
 
-# Update LaunchAgent plists if the binary path differs from the default
-MLX_PATH="$(which mlx_lm.server 2>/dev/null || true)"
-DEFAULT_PATH="/usr/local/bin/mlx_lm.server"
-
-if [ -n "$MLX_PATH" ] && [ "$MLX_PATH" != "$DEFAULT_PATH" ]; then
-  log_info "Updating LaunchAgent plists with mlx_lm.server path: $MLX_PATH"
-  for plist in com.mlx.fast.plist com.mlx.indepth.plist; do
-    sed -i '' "s|$DEFAULT_PATH|$MLX_PATH|g" "$REPO_DIR/launchagents/$plist"
-  done
-  log_success "Plist paths updated"
-fi
+# NOTE: mlx_lm.server path substitution happens in Section 5 against the
+# INSTALLED plists in ~/Library/LaunchAgents/, so the repo templates stay
+# generic and portable across users/machines.
 
 # --------------------------------------------------------------
 # 2. Create required directories
@@ -139,6 +131,12 @@ export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
 # --------------------------------------------------------------
 log_info "Installing LaunchAgents..."
 
+# Resolve the real mlx_lm.server path once. The repo plist templates ship with
+# the generic default /usr/local/bin/mlx_lm.server; we substitute the real path
+# into each INSTALLED copy below (not the repo templates) so they stay portable.
+MLX_PATH="$(which mlx_lm.server 2>/dev/null || true)"
+DEFAULT_PATH="/usr/local/bin/mlx_lm.server"
+
 PLISTS=(
   "com.mlx.fast.plist"
   "com.mlx.indepth.plist"
@@ -157,12 +155,26 @@ for plist in "${PLISTS[@]}"; do
   cp "$SRC" "$DEST"
   xattr -c "$DEST"  # Strip quarantine and any other extended attributes
 
+  # For MLX plists, bake the real mlx_lm.server path into the installed copy
+  # (not the repo template) if it differs from the generic default. Done before
+  # bootstrap so the agent starts with the correct path.
+  if [[ "$plist" == com.mlx.*.plist ]] && [ -n "$MLX_PATH" ] && [ "$MLX_PATH" != "$DEFAULT_PATH" ]; then
+    sed -i '' "s|$DEFAULT_PATH|$MLX_PATH|g" "$DEST"
+  fi
+
   # Unload first in case it's already registered (ignore errors)
   launchctl bootout "gui/$(id -u)" "$DEST" 2>/dev/null || true
 
   launchctl bootstrap "gui/$(id -u)" "$DEST"
   log_success "Loaded $plist"
 done
+
+if [ -n "$MLX_PATH" ] && [ "$MLX_PATH" != "$DEFAULT_PATH" ]; then
+  log_success "Installed MLX plists updated with path: $MLX_PATH"
+elif [ -z "$MLX_PATH" ]; then
+  log_warn "mlx_lm.server not on PATH — installed MLX plists kept the default path"
+  log_warn "Run 'pipx ensurepath && source ~/.zshrc' then re-run this script"
+fi
 
 # --------------------------------------------------------------
 # 6. Copy Docker Compose file
