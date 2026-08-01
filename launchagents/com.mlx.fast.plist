@@ -17,6 +17,10 @@
     <string>0.0.0.0</string>
     <string>--port</string>
     <string>8080</string>
+    <string>--max-tokens</string>
+    <string>4096</string>
+    <string>--chat-template-args</string>
+    <string>{"enable_thinking":false}</string>
   </array>
 
   <key>RunAtLoad</key>

@@ -142,12 +142,12 @@ hf download mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit \
 
 LaunchAgents in `~/Library/LaunchAgents/`:
 
-| Plist | Role | Model | Port | Behavior |
-|---|---|---|---|---|---|
-| `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-8B-4bit` | 8080 | Persistent, restarts on crash |
-| `com.mlx.indepth.plist` | In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | 8081 | Persistent, restarts on crash |
-| `com.colima.server.plist` | Docker VM | Colima | n/a | Interval check every 5 min |
-| `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | One-shot compose up |
+| Plist | Role | Model | Port | Max Tokens | Thinking | Behavior |
+|---|---|---|---|---|---|---|
+| `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-8B-4bit` | 8080 | 4096 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
+| `com.mlx.indepth.plist` | In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | 8081 | 16384 | On | Persistent, restarts on crash |
+| `com.colima.server.plist` | Docker VM | Colima | n/a | n/a | n/a | Interval check every 5 min |
+| `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | n/a | n/a | One-shot compose up |
 
 Manage LaunchAgents:
 
@@ -168,10 +168,10 @@ launchctl list | grep -E "mlx|colima|localllm"
 
 ### MLX server configuration
 
-| Service | Model | Host | Port |
-|---|---|---|---|---|
-| Fast | `mlx-community/Qwen3-8B-4bit` | `0.0.0.0` | `8080` |
-| In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | `0.0.0.0` | `8081` |
+| Service | Model | Host | Port | Max Tokens | Thinking |
+|---|---|---|---|---|---|
+| Fast | `mlx-community/Qwen3-8B-4bit` | `0.0.0.0` | `8080` | 4096 | Off (`enable_thinking=false`) |
+| In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | `0.0.0.0` | `8081` | 16384 | On |
 
 ### Swapping models
 
@@ -189,12 +189,14 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mlx.<role>.plist
 curl http://localhost:<port>/v1/models
 ```
 
+> **Reasoning models & `--max-tokens`:** Reasoning models (Qwen3, DeepSeek-R1, etc.) emit a `…` block *before* the answer. Without `--max-tokens`, `mlx_lm.server` defaults to **512** tokens, which a reasoning model will exhaust *inside* the thinking block and get cut off (`finish_reason: length`) before producing any answer — Open WebUI then shows only the thinking panel with an empty response. Set a generous `--max-tokens` for reasoners (e.g. `16384` for the in-depth model). For a model used for fast/direct answers, disable thinking entirely with `--chat-template-args '{"enable_thinking":false}'` so no token budget is spent on reasoning. See [Model only shows thinking, no answer](#model-only-shows-thinking-no-answer) in Troubleshooting.
+
 ### Recommended models (32GB RAM)
 
-| Role | Model | Est. RAM | Port |
-|---|---|---|---|
-| Fast | `mlx-community/Qwen3-8B-4bit` | ~7GB | 8080 |
-| In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | ~9GB | 8081 |
+| Role | Model | Est. RAM | Port | Max Tokens | Thinking |
+|---|---|---|---|---|---|
+| Fast | `mlx-community/Qwen3-8B-4bit` | ~7GB | 8080 | 4096 | Off (`enable_thinking=false`) |
+| In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | ~9GB | 8081 | 16384 | On |
 
 Total estimated RAM if both are loaded: ~16 GB (on a 32 GB unified memory Mac Studio).
 
@@ -350,6 +352,37 @@ If container checks fail, verify this entry exists in `docker/docker-compose.yml
 ```yaml
 extra_hosts:
   - "host.docker.internal:host-gateway"
+```
+
+### Model only shows thinking, no answer
+
+Open WebUI shows a **thinking** panel but the response is empty or missing. This affects reasoning models (Qwen3, DeepSeek-R1-Distill, etc.).
+
+**Cause:** Without `--max-tokens`, `mlx_lm.server` defaults to **512** generated tokens. A reasoning model emits its `…` block *first*; on any non-trivial prompt it spends all 512 tokens inside the thinking block and is cut off (`finish_reason: length`) before emitting the closing `` and the actual answer. Open WebUI then renders the partial thinking with no answer text.
+
+**Fix:** Add `--max-tokens` to the affected plist in `~/Library/LaunchAgents/` (e.g. `16384` for the in-depth DeepSeek model, `4096` for the fast Qwen model). For a model meant to give fast/direct answers, also disable the thinking block:
+
+```xml
+<string>--max-tokens</string>
+<string>4096</string>
+<string>--chat-template-args</string>
+<string>{"enable_thinking":false}</string>
+```
+
+Then reload the agent:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.mlx.<role>.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mlx.<role>.plist
+```
+
+**Confirm** the model now finishes its answer — `finish_reason` should be `stop` (not `length`) and `content` should be non-empty:
+
+```bash
+curl -s http://localhost:8081/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit","messages":[{"role":"user","content":"Explain TCP vs UDP thoroughly."}]}' \
+  | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]; print(c['finish_reason'], len(c['message'].get('content','') or ''))"
 ```
 
 ### SearXNG not returning results in Open WebUI

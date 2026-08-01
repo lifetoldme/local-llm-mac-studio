@@ -17,6 +17,8 @@
     <string>0.0.0.0</string>
     <string>--port</string>
     <string>8081</string>
+    <string>--max-tokens</string>
+    <string>16384</string>
   </array>
 
   <key>RunAtLoad</key>
