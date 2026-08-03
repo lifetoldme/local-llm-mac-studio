@@ -12,13 +12,15 @@
   <array>
     <string>/usr/local/bin/mlx_lm.server</string>
     <string>--model</string>
-    <string>mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit</string>
+    <string>mlx-community/Qwen3.6-27B-OptiQ-4bit</string>
     <string>--host</string>
     <string>0.0.0.0</string>
     <string>--port</string>
     <string>8081</string>
     <string>--max-tokens</string>
     <string>16384</string>
+    <string>--chat-template-args</string>
+    <string>{"enable_thinking":false}</string>
   </array>
 
   <key>RunAtLoad</key>

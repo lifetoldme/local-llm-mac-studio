@@ -8,8 +8,8 @@ A fully self-hosted local LLM setup running on an Apple Silicon Mac Studio with 
 
 ```
 macOS (native, Metal GPU accelerated — MLX)
-├── mlx_lm.server  (fast model)       →  :8080   ← Home Assistant, quick queries
-└── mlx_lm.server  (indepth model)    →  :8081   ← Open WebUI default, log analysis, coding
+├── mlx_lm.server  (fast model)       →  :8080   ← Home Assistant, Open WebUI quick chat
+└── mlx_lm.server  (indepth model)    →  :8081   ← Open WebUI in-depth, Hermes Agent
 
 Docker via Colima
 ├── open-webui               →  :3000  (connects to both endpoints)
@@ -106,16 +106,16 @@ chmod +x scripts/*.sh
 
 ### 2. Download models
 
-All two models can be chained into a single command. Total download is ~12GB:
+All two models can be chained into a single command. Total download is ~19GB:
 
 ```bash
 sudo mkdir -p /opt/models
 sudo chown $(whoami) /opt/models
 
-hf download mlx-community/Qwen3-8B-4bit \
-  --local-dir /opt/models/qwen3-8b && \
-hf download mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit \
-  --local-dir /opt/models/deepseek-r1-14b
+hf download mlx-community/Qwen3-1.7B-4bit \
+  --local-dir /opt/models/qwen3-1.7b && \
+hf download mlx-community/Qwen3.6-27B-OptiQ-4bit \
+  --local-dir /opt/models/qwen3.6-27b-optiq
 ```
 
 ### 3. Run the install script
@@ -144,8 +144,8 @@ LaunchAgents in `~/Library/LaunchAgents/`:
 
 | Plist | Role | Model | Port | Max Tokens | Thinking | Behavior |
 |---|---|---|---|---|---|---|
-| `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-8B-4bit` | 8080 | 4096 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
-| `com.mlx.indepth.plist` | In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | 8081 | 16384 | On | Persistent, restarts on crash |
+| `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-1.7B-4bit` | 8080 | 2048 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
+| `com.mlx.indepth.plist` | In-Depth | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | 8081 | 16384 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
 | `com.colima.server.plist` | Docker VM | Colima | n/a | n/a | n/a | Interval check every 5 min |
 | `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | n/a | n/a | One-shot compose up |
 
@@ -170,8 +170,8 @@ launchctl list | grep -E "mlx|colima|localllm"
 
 | Service | Model | Host | Port | Max Tokens | Thinking |
 |---|---|---|---|---|---|
-| Fast | `mlx-community/Qwen3-8B-4bit` | `0.0.0.0` | `8080` | 4096 | Off (`enable_thinking=false`) |
-| In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | `0.0.0.0` | `8081` | 16384 | On |
+| Fast | `mlx-community/Qwen3-1.7B-4bit` | `0.0.0.0` | `8080` | 2048 | Off (`enable_thinking=false`) |
+| In-Depth | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | `0.0.0.0` | `8081` | 16384 | Off (`enable_thinking=false`) |
 
 ### Swapping models
 
@@ -195,10 +195,10 @@ curl http://localhost:<port>/v1/models
 
 | Role | Model | Est. RAM | Port | Max Tokens | Thinking |
 |---|---|---|---|---|---|
-| Fast | `mlx-community/Qwen3-8B-4bit` | ~7GB | 8080 | 4096 | Off (`enable_thinking=false`) |
-| In-Depth | `mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit` | ~9GB | 8081 | 16384 | On |
+| Fast | `mlx-community/Qwen3-1.7B-4bit` | ~1GB | 8080 | 2048 | Off (`enable_thinking=false`) |
+| In-Depth | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | ~17.5GB + ~5GB KV cache @ 64k | 8081 | 16384 | Off (`enable_thinking=false`) |
 
-Total estimated RAM if both are loaded: ~16 GB (on a 32 GB unified memory Mac Studio).
+Total estimated RAM if both are loaded: ~24 GB (on a 32 GB unified memory Mac Studio). The in-depth model's KV cache grows with context length — at the 64k context Hermes requires, budget ~5GB for it alone. If you see swap under concurrent Home Assistant + Hermes load, drop the fast model to `mlx-community/Qwen3-0.6B-4bit` (~300MB), or pause Open WebUI during heavy agent runs.
 
 ### Colima resources
 
@@ -236,8 +236,78 @@ Open WebUI will discover both endpoints and expose model selection via the model
 |---|---|---|
 | **Home Assistant** | `http://<HOST_IP>:8080/v1` | Fast, low-latency responses |
 | **Open WebUI** | `:8081` default, `:8080` selectable | In-Depth for general chat, fast on demand |
-| **opencode / JetBrains** | `http://<HOST_IP>:8081/v1` | In-Depth model for coding tasks |
-| **Log monitoring/analysis** | `http://<HOST_IP>:8081/v1` | In-Depth model for anomaly detection |
+| **Hermes Agent** | `http://<HOST_IP>:8081/v1` | In-Depth model (Qwen3.6-27B-OptiQ) for agent tool-calling — see [Hermes Agent integration](#hermes-agent-integration) |
+
+---
+
+## Hermes Agent integration
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is a self-improving AI agent by Nous Research. It works with any OpenAI-compatible endpoint, so the in-depth `mlx_lm.server` on `:8081` is a direct fit. The in-depth model (`mlx-community/Qwen3.6-27B-OptiQ-4bit`) is an OptiQ mixed-precision quant whose calibration mix explicitly includes tool-call and agent domains (BFCL-V3 function-calling score: 92.5%), making it a solid local choice for Hermes's tool-calling workflows.
+
+### Install Hermes
+
+```bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+source ~/.zshrc
+```
+
+Hermes installs into `~/.hermes/` and does not touch this stack's LaunchAgents or Docker containers.
+
+### Point Hermes at the in-depth endpoint
+
+```bash
+hermes model
+# → Select "Custom endpoint (self-hosted / VLLM / etc.)"
+# → API base URL:  http://localhost:8081/v1
+# → API key:       (leave blank — local server needs none)
+# → Model name:    mlx-community/Qwen3.6-27B-OptiQ-4bit
+```
+
+Or set it directly:
+
+```bash
+hermes config set model.provider custom
+hermes config set model.base_url http://localhost:8081/v1
+hermes config set model.default mlx-community/Qwen3.6-27B-OptiQ-4bit
+```
+
+### Context length requirement
+
+Hermes **rejects** endpoints with under 64,000 tokens of context at startup — the system prompt, tool schemas, and working conversation state need the room. `mlx_lm.server` uses the model's native context window by default (Qwen3.6-27B supports 128k), so this is satisfied out of the box. Verify:
+
+```bash
+curl -s http://localhost:8081/v1/models | python3 -m json.tool
+```
+
+If you ever need to override it:
+
+```bash
+hermes config set model.context_length 65536
+```
+
+### Why thinking is disabled on the in-depth model
+
+The in-depth plist passes `--chat-template-args '{"enable_thinking":false}'`. Reasoning models emit a `…` block *before* the answer; in an agent loop that block can consume the entire token budget before a tool call is emitted, and the resulting tool-call JSON is often malformed. Hermes's own docs warn about this for Qwen/DeepSeek reasoners. Disabling thinking keeps tool calls clean and reliable — which is the priority here.
+
+### Verify the integration
+
+```bash
+# 1. Endpoint up and reporting a ≥64k context
+curl -s http://localhost:8081/v1/models
+
+# 2. Hermes starts without rejecting the endpoint
+hermes
+
+# 3. Run one simple tool-call turn in Hermes (e.g. ask it to list files
+#    in the current directory) and confirm the tool call completes
+#    end-to-end without a truncated/malformed response.
+```
+
+### Reliability notes for a 32GB Mac Studio
+
+- **RAM is tight.** The 27B OptiQ weights (~17.5GB) plus a 64k KV cache (~5GB) plus the fast model (~1GB) plus macOS/Colima/Docker overhead (~4–6GB) sits at ~28–30GB. If Hermes is mid-conversation *and* Home Assistant fires simultaneously, you may hit swap. Mitigations: drop the fast model to `mlx-community/Qwen3-0.6B-4bit` (~300MB), or pause Open WebUI during heavy agent runs.
+- **27B-OptiQ handles most agent loops reliably**, but self-improving skill creation and complex multi-step planning are weaker than frontier cloud models. Set expectations accordingly — this is a local-first tradeoff, not a Claude/GPT replacement.
+- **No cloud fallback is configured.** This setup is intentionally local-only. If you later want hard agent tasks to fall through to a frontier model, Hermes supports fallback providers (OpenRouter, HuggingFace Inference Providers, Nous Portal) — see `hermes model`.
 
 ---
 
@@ -323,7 +393,25 @@ sudo chown $(whoami) /var/log/mlx/
 
 ```bash
 hf auth login
-hf download mlx-community/Qwen3-8B-4bit --local-dir /opt/models/qwen3-8b
+hf download mlx-community/Qwen3.6-27B-OptiQ-4bit --local-dir /opt/models/qwen3.6-27b-optiq
+```
+
+### `mlx_lm.server` fails to load `Qwen3.6-27B-4bit` (wrong model variant)
+
+The Hugging Face model `mlx-community/Qwen3.6-27B-4bit` is a **vision-language model** (tagged `Image-Text-to-Text`, converted with `mlx-vlm`). It will **not** load in `mlx_lm.server` — the server expects a text-only MLX model and will error at startup.
+
+**Fix:** Use the text-only sibling `mlx-community/Qwen3.6-27B-OptiQ-4bit` instead (tagged `Text Generation`, loads via `from mlx_lm import load, generate`). This is the variant referenced throughout this README and the one Hermes integrates with. If you already downloaded the VLM by mistake:
+
+```bash
+rm -rf /opt/models/qwen3.6-27b   # remove the VLM
+hf download mlx-community/Qwen3.6-27B-OptiQ-4bit --local-dir /opt/models/qwen3.6-27b-optiq
+```
+
+Then reload the in-depth LaunchAgent:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.mlx.indepth.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mlx.indepth.plist
 ```
 
 ### Port conflicts (8080/8081)
@@ -356,15 +444,15 @@ extra_hosts:
 
 ### Model only shows thinking, no answer
 
-Open WebUI shows a **thinking** panel but the response is empty or missing. This affects reasoning models (Qwen3, DeepSeek-R1-Distill, etc.).
+Open WebUI shows a **thinking** panel but the response is empty or missing. This affects reasoning models (Qwen3, Qwen3.6, etc.) when thinking is enabled.
 
 **Cause:** Without `--max-tokens`, `mlx_lm.server` defaults to **512** generated tokens. A reasoning model emits its `…` block *first*; on any non-trivial prompt it spends all 512 tokens inside the thinking block and is cut off (`finish_reason: length`) before emitting the closing `` and the actual answer. Open WebUI then renders the partial thinking with no answer text.
 
-**Fix:** Add `--max-tokens` to the affected plist in `~/Library/LaunchAgents/` (e.g. `16384` for the in-depth DeepSeek model, `4096` for the fast Qwen model). For a model meant to give fast/direct answers, also disable the thinking block:
+**Fix:** Add `--max-tokens` to the affected plist in `~/Library/LaunchAgents/` (e.g. `16384` for the in-depth Qwen3.6-27B model, `2048` for the fast Qwen3-1.7B model). For a model meant to give fast/direct answers (or for agent tool-calling where a thinking block can eat the budget before a tool call), also disable the thinking block:
 
 ```xml
 <string>--max-tokens</string>
-<string>4096</string>
+<string>16384</string>
 <string>--chat-template-args</string>
 <string>{"enable_thinking":false}</string>
 ```
@@ -381,7 +469,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mlx.<role>.plist
 ```bash
 curl -s http://localhost:8081/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit","messages":[{"role":"user","content":"Explain TCP vs UDP thoroughly."}]}' \
+  -d '{"model":"mlx-community/Qwen3.6-27B-OptiQ-4bit","messages":[{"role":"user","content":"Explain TCP vs UDP thoroughly."}]}' \
   | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]; print(c['finish_reason'], len(c['message'].get('content','') or ''))"
 ```
 
