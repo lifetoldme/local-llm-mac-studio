@@ -12,7 +12,7 @@
   <array>
     <string>/usr/local/bin/mlx_lm.server</string>
     <string>--model</string>
-    <string>mlx-community/Qwen3-1.7B-4bit</string>
+    <string>/opt/models/qwen3-1.7b</string>
     <string>--host</string>
     <string>0.0.0.0</string>
     <string>--port</string>

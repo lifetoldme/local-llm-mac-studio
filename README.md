@@ -142,12 +142,14 @@ hf download mlx-community/Qwen3.6-27B-OptiQ-4bit \
 
 LaunchAgents in `~/Library/LaunchAgents/`:
 
-| Plist | Role | Model | Port | Max Tokens | Thinking | Behavior |
+| Plist | Role | Model (`--model`) | Port | Max Tokens | Thinking | Behavior |
 |---|---|---|---|---|---|---|
-| `com.mlx.fast.plist` | Fast | `mlx-community/Qwen3-1.7B-4bit` | 8080 | 2048 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
-| `com.mlx.indepth.plist` | In-Depth | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | 8081 | 16384 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
+| `com.mlx.fast.plist` | Fast | `/opt/models/qwen3-1.7b` | 8080 | 2048 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
+| `com.mlx.indepth.plist` | In-Depth | `/opt/models/qwen3.6-27b-optiq` | 8081 | 16384 | Off (`enable_thinking=false`) | Persistent, restarts on crash |
 | `com.colima.server.plist` | Docker VM | Colima | n/a | n/a | n/a | Interval check every 5 min |
 | `com.localllm.compose.plist` | Containers | Open WebUI/ChromaDB/SearXNG | n/a | n/a | n/a | One-shot compose up |
+
+> **Local paths, not repo IDs:** the plists load models from `/opt/models/<name>` (the directories created in [step 2](#2-download-models)). `mlx_lm.server` reports this path as the model ID on `/v1/models`, and API clients (Open WebUI, Hermes) must send the same path in the `model` field — see [Model ID is a local path](#model-id-is-a-local-path) in Troubleshooting.
 
 Manage LaunchAgents:
 
@@ -168,10 +170,10 @@ launchctl list | grep -E "mlx|colima|localllm"
 
 ### MLX server configuration
 
-| Service | Model | Host | Port | Max Tokens | Thinking |
+| Service | Model (`--model`) | Host | Port | Max Tokens | Thinking |
 |---|---|---|---|---|---|
-| Fast | `mlx-community/Qwen3-1.7B-4bit` | `0.0.0.0` | `8080` | 2048 | Off (`enable_thinking=false`) |
-| In-Depth | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | `0.0.0.0` | `8081` | 16384 | Off (`enable_thinking=false`) |
+| Fast | `/opt/models/qwen3-1.7b` | `0.0.0.0` | `8080` | 2048 | Off (`enable_thinking=false`) |
+| In-Depth | `/opt/models/qwen3.6-27b-optiq` | `0.0.0.0` | `8081` | 16384 | Off (`enable_thinking=false`) |
 
 ### Swapping models
 
@@ -193,10 +195,10 @@ curl http://localhost:<port>/v1/models
 
 ### Recommended models (32GB RAM)
 
-| Role | Model | Est. RAM | Port | Max Tokens | Thinking |
-|---|---|---|---|---|---|
-| Fast | `mlx-community/Qwen3-1.7B-4bit` | ~1GB | 8080 | 2048 | Off (`enable_thinking=false`) |
-| In-Depth | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | ~17.5GB + ~5GB KV cache @ 64k | 8081 | 16384 | Off (`enable_thinking=false`) |
+| Role | Model (Hugging Face repo) | Local path | Est. RAM | Port | Max Tokens | Thinking |
+|---|---|---|---|---|---|---|
+| Fast | `mlx-community/Qwen3-1.7B-4bit` | `/opt/models/qwen3-1.7b` | ~1GB | 8080 | 2048 | Off (`enable_thinking=false`) |
+| In-Depth | `mlx-community/Qwen3.6-27B-OptiQ-4bit` | `/opt/models/qwen3.6-27b-optiq` | ~17.5GB + ~5GB KV cache @ 64k | 8081 | 16384 | Off (`enable_thinking=false`) |
 
 Total estimated RAM if both are loaded: ~24 GB (on a 32 GB unified memory Mac Studio). The in-depth model's KV cache grows with context length — at the 64k context Hermes requires, budget ~5GB for it alone. If you see swap under concurrent Home Assistant + Hermes load, drop the fast model to `mlx-community/Qwen3-0.6B-4bit` (~300MB), or pause Open WebUI during heavy agent runs.
 
@@ -260,7 +262,7 @@ hermes model
 # → Select "Custom endpoint (self-hosted / VLLM / etc.)"
 # → API base URL:  http://localhost:8081/v1
 # → API key:       (leave blank — local server needs none)
-# → Model name:    mlx-community/Qwen3.6-27B-OptiQ-4bit
+# → Model name:    /opt/models/qwen3.6-27b-optiq
 ```
 
 Or set it directly:
@@ -268,18 +270,21 @@ Or set it directly:
 ```bash
 hermes config set model.provider custom
 hermes config set model.base_url http://localhost:8081/v1
-hermes config set model.default mlx-community/Qwen3.6-27B-OptiQ-4bit
+hermes config set model.default /opt/models/qwen3.6-27b-optiq
 ```
+
+> **The model name must be the local path, not the repo ID.** `mlx_lm.server` reports the resolved `--model` path as the model ID on `/v1/models`, and on chat-completion requests it only short-circuits a reload if the incoming `model` field matches the loaded path (or the magic string `default_model`). If you send the repo ID `mlx-community/Qwen3.6-27B-OptiQ-4bit` instead, the server treats it as a new model and **downloads the 19GB model a second time** into the Hugging Face cache. See [Model ID is a local path](#model-id-is-a-local-path) in Troubleshooting.
 
 ### Context length requirement
 
-Hermes **rejects** endpoints with under 64,000 tokens of context at startup — the system prompt, tool schemas, and working conversation state need the room. `mlx_lm.server` uses the model's native context window by default (Qwen3.6-27B supports 128k), so this is satisfied out of the box. Verify:
+Hermes **rejects** endpoints with under 64,000 tokens of context at startup — the system prompt, tool schemas, and working conversation state need the room. `mlx_lm.server` uses the model's native context window by default (Qwen3.6-27B supports 128k), so this is satisfied out of the box. Verify the endpoint is up and reports the in-depth model:
 
 ```bash
 curl -s http://localhost:8081/v1/models | python3 -m json.tool
+# Expect an entry with "id": "/opt/models/qwen3.6-27b-optiq"
 ```
 
-If you ever need to override it:
+If you ever need to override the context length:
 
 ```bash
 hermes config set model.context_length 65536
@@ -414,6 +419,24 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.mlx.indepth.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mlx.indepth.plist
 ```
 
+### Model ID is a local path
+
+The plists pass `--model /opt/models/<name>` (an on-disk path), so `mlx_lm.server` reports that path — not the Hugging Face repo ID — as the model ID on `/v1/models`:
+
+```bash
+curl -s http://localhost:8081/v1/models | python3 -m json.tool
+# {"data": [{"id": "/opt/models/qwen3.6-27b-optiq", ...}]}
+```
+
+Any client (Open WebUI, Hermes, curl) must send this exact path in the `model` field of chat-completion requests. The server only short-circuits a model reload if the incoming `model` matches the loaded path (or the magic string `default_model`); any other value is treated as a new model path and **triggers a fresh download**.
+
+**Symptom:** you point a client at the endpoint with `model: mlx-community/Qwen3.6-27B-OptiQ-4bit` (the repo ID) and the server starts downloading ~19GB into `~/.cache/huggingface/hub` even though the model is already loaded from `/opt/models/qwen3.6-27b-optiq`.
+
+**Fix:** use the local path everywhere:
+- Hermes: `hermes config set model.default /opt/models/qwen3.6-27b-optiq`
+- Open WebUI: pick the `/opt/models/...` entry from the model picker (don't type a repo ID).
+- curl: `-d '{"model":"/opt/models/qwen3.6-27b-optiq", ...}'`
+
 ### Port conflicts (8080/8081)
 
 ```bash
@@ -469,7 +492,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mlx.<role>.plist
 ```bash
 curl -s http://localhost:8081/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"mlx-community/Qwen3.6-27B-OptiQ-4bit","messages":[{"role":"user","content":"Explain TCP vs UDP thoroughly."}]}' \
+  -d '{"model":"/opt/models/qwen3.6-27b-optiq","messages":[{"role":"user","content":"Explain TCP vs UDP thoroughly."}]}' \
   | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]; print(c['finish_reason'], len(c['message'].get('content','') or ''))"
 ```
 
