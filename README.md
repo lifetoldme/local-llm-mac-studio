@@ -9,7 +9,7 @@ A fully self-hosted local LLM setup running on an Apple Silicon Mac Studio with 
 ```
 macOS (native, Metal GPU accelerated — MLX)
 ├── mlx_lm.server  (fast model)       →  :8080   ← Home Assistant, Open WebUI quick chat
-└── mlx_lm.server  (indepth model)    →  :8081   ← Open WebUI in-depth, Hermes Agent
+└── mlx_lm.server  (indepth model)    →  :8081   ← Open WebUI in-depth (local), Hermes Agent (remote, same LAN)
 
 Docker via Colima
 ├── open-webui               →  :3000  (connects to both endpoints)
@@ -246,21 +246,43 @@ Open WebUI will discover both endpoints and expose model selection via the model
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is a self-improving AI agent by Nous Research. It works with any OpenAI-compatible endpoint, so the in-depth `mlx_lm.server` on `:8081` is a direct fit. The in-depth model (`mlx-community/Qwen3.6-27B-OptiQ-4bit`) is an OptiQ mixed-precision quant whose calibration mix explicitly includes tool-call and agent domains (BFCL-V3 function-calling score: 92.5%), making it a solid local choice for Hermes's tool-calling workflows.
 
-### Install Hermes
+> **Topology:** Hermes runs on a **separate host on the same LAN** as the Mac Studio. The MLX plists already bind `--host 0.0.0.0`, so `:8081` is reachable from other machines at `http://<MAC_STUDIO_IP>:8081/v1`. Find the Mac Studio's LAN IP with `ipconfig getifaddr en0` on the Mac Studio itself (the `status.sh` network summary prints it too).
+
+### Firewall — allow LAN access to :8081
+
+macOS's Application Firewall blocks incoming connections to `mlx_lm.server` by default. On a headless Mac Studio you won't see the allow dialog, so allow it explicitly once:
+
+```bash
+# On the Mac Studio (one-time):
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "$(which mlx_lm.server)"
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblock "$(which mlx_lm.server)"
+```
+
+Or via GUI: System Settings → Network → Firewall → Options → add the `mlx_lm.server` binary and set to "Allow incoming connections". Verify from the Hermes host (not the Mac Studio):
+
+```bash
+# On the Hermes host — replace with the Mac Studio's LAN IP:
+curl -s http://<MAC_STUDIO_IP>:8081/v1/models | python3 -m json.tool
+# Expect: {"data": [{"id": "/opt/models/qwen3.6-27b-optiq", ...}]}
+```
+
+If that hangs or is refused, the firewall is still blocking — re-check the allowlist above. Note that the endpoint is **unauthenticated** (no API key); anyone on the LAN can send requests and consume RAM. That's acceptable on a trusted home LAN; on a shared network, restrict `:8081` to the Hermes host's IP via `pf` rules or a VPN.
+
+### Install Hermes (on the Hermes host, not the Mac Studio)
 
 ```bash
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 source ~/.zshrc
 ```
 
-Hermes installs into `~/.hermes/` and does not touch this stack's LaunchAgents or Docker containers.
+Hermes installs into `~/.hermes/` on the Hermes host and does not touch the Mac Studio's LaunchAgents or Docker containers.
 
 ### Point Hermes at the in-depth endpoint
 
 ```bash
 hermes model
 # → Select "Custom endpoint (self-hosted / VLLM / etc.)"
-# → API base URL:  http://localhost:8081/v1
+# → API base URL:  http://<MAC_STUDIO_IP>:8081/v1
 # → API key:       (leave blank — local server needs none)
 # → Model name:    /opt/models/qwen3.6-27b-optiq
 ```
@@ -269,22 +291,23 @@ Or set it directly:
 
 ```bash
 hermes config set model.provider custom
-hermes config set model.base_url http://localhost:8081/v1
+hermes config set model.base_url http://<MAC_STUDIO_IP>:8081/v1
 hermes config set model.default /opt/models/qwen3.6-27b-optiq
 ```
 
-> **The model name must be the local path, not the repo ID.** `mlx_lm.server` reports the resolved `--model` path as the model ID on `/v1/models`, and on chat-completion requests it only short-circuits a reload if the incoming `model` field matches the loaded path (or the magic string `default_model`). If you send the repo ID `mlx-community/Qwen3.6-27B-OptiQ-4bit` instead, the server treats it as a new model and **downloads the 19GB model a second time** into the Hugging Face cache. See [Model ID is a local path](#model-id-is-a-local-path) in Troubleshooting.
+> **The model name must be the local path, not the repo ID.** `mlx_lm.server` reports the resolved `--model` path as the model ID on `/v1/models`, and on chat-completion requests it only short-circuits a reload if the incoming `model` field matches the loaded path (or the magic string `default_model`). If you send the repo ID `mlx-community/Qwen3.6-27B-OptiQ-4bit` instead, the server treats it as a new model and **downloads the 19GB model a second time** into the Hugging Face cache on the Mac Studio. The path is just a string identifier sent over HTTP — it does **not** need to exist on the Hermes host. See [Model ID is a local path](#model-id-is-a-local-path) in Troubleshooting.
 
 ### Context length requirement
 
 Hermes **rejects** endpoints with under 64,000 tokens of context at startup — the system prompt, tool schemas, and working conversation state need the room. `mlx_lm.server` uses the model's native context window by default (Qwen3.6-27B supports 128k), so this is satisfied out of the box. Verify the endpoint is up and reports the in-depth model:
 
 ```bash
+# On the Mac Studio:
 curl -s http://localhost:8081/v1/models | python3 -m json.tool
 # Expect an entry with "id": "/opt/models/qwen3.6-27b-optiq"
 ```
 
-If you ever need to override the context length:
+If you ever need to override the context length (run on the Hermes host):
 
 ```bash
 hermes config set model.context_length 65536
@@ -297,13 +320,16 @@ The in-depth plist passes `--chat-template-args '{"enable_thinking":false}'`. Re
 ### Verify the integration
 
 ```bash
-# 1. Endpoint up and reporting a ≥64k context
+# 1. On the Mac Studio — endpoint up and serving the in-depth model:
 curl -s http://localhost:8081/v1/models
 
-# 2. Hermes starts without rejecting the endpoint
+# 2. On the Hermes host — reachable over the LAN (replace with the Mac Studio's IP):
+curl -s http://<MAC_STUDIO_IP>:8081/v1/models
+
+# 3. On the Hermes host — Hermes starts without rejecting the endpoint:
 hermes
 
-# 3. Run one simple tool-call turn in Hermes (e.g. ask it to list files
+# 4. Run one simple tool-call turn in Hermes (e.g. ask it to list files
 #    in the current directory) and confirm the tool call completes
 #    end-to-end without a truncated/malformed response.
 ```
@@ -313,6 +339,7 @@ hermes
 - **RAM is tight.** The 27B OptiQ weights (~17.5GB) plus a 64k KV cache (~5GB) plus the fast model (~1GB) plus macOS/Colima/Docker overhead (~4–6GB) sits at ~28–30GB. If Hermes is mid-conversation *and* Home Assistant fires simultaneously, you may hit swap. Mitigations: drop the fast model to `mlx-community/Qwen3-0.6B-4bit` (~300MB), or pause Open WebUI during heavy agent runs.
 - **27B-OptiQ handles most agent loops reliably**, but self-improving skill creation and complex multi-step planning are weaker than frontier cloud models. Set expectations accordingly — this is a local-first tradeoff, not a Claude/GPT replacement.
 - **No cloud fallback is configured.** This setup is intentionally local-only. If you later want hard agent tasks to fall through to a frontier model, Hermes supports fallback providers (OpenRouter, HuggingFace Inference Providers, Nous Portal) — see `hermes model`.
+- **Hermes is off-host**, so Mac Studio reboots / LaunchAgent reloads will drop in-flight Hermes conversations. The MLX plists are `KeepAlive`, so the endpoint recovers automatically, but Hermes will need to retry its current turn.
 
 ---
 
@@ -464,6 +491,24 @@ If container checks fail, verify this entry exists in `docker/docker-compose.yml
 extra_hosts:
   - "host.docker.internal:host-gateway"
 ```
+
+### Hermes (remote host) cannot reach the MLX servers
+
+Hermes runs on a separate LAN host, so `localhost` won't work — it must use the Mac Studio's LAN IP. From the Hermes host:
+
+```bash
+# Replace with the Mac Studio's LAN IP (run `ipconfig getifaddr en0` on the Mac Studio):
+curl -s http://<MAC_STUDIO_IP>:8081/v1/models
+```
+
+If this hangs or is refused but `curl http://localhost:8081/v1/models` works on the Mac Studio itself, the macOS Application Firewall is blocking inbound LAN traffic. Allow the `mlx_lm.server` binary once on the Mac Studio:
+
+```bash
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "$(which mlx_lm.server)"
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblock "$(which mlx_lm.server)"
+```
+
+The MLX plists bind `--host 0.0.0.0`, so no change to the plists is needed — only the OS firewall. If you reload the LaunchAgent after a `mlx_lm.server` upgrade, re-add the new binary path (socketfilterfw keys on the executable path, which changes when pipx upgrades `mlx-lm`).
 
 ### Model only shows thinking, no answer
 
