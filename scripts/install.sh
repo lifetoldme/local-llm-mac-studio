@@ -206,6 +206,82 @@ docker compose up -d
 log_success "Open WebUI and ChromaDB started"
 
 # --------------------------------------------------------------
+# 8b. Sync models to Open WebUI
+# --------------------------------------------------------------
+log_info "Syncing models to Open WebUI..."
+
+sync_openwebui_models() {
+  FAST_MODEL=$(curl -s http://localhost:8080/v1/models | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null)
+  INDEPTH_MODEL=$(curl -s http://localhost:8081/v1/models | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null)
+
+  if [ -z "$FAST_MODEL" ] || [ -z "$INDEPTH_MODEL" ]; then
+    log_warn "Skipping Open WebUI model sync — MLX APIs not responding"
+    return
+  fi
+
+  docker exec open-webui python3 - "$FAST_MODEL" "$INDEPTH_MODEL" << 'PYEOF'
+import sys, sqlite3, json, time
+
+fast_model = sys.argv[1]
+indepth_model = sys.argv[2]
+
+conn = sqlite3.connect('/app/backend/data/webui.db')
+cur = conn.cursor()
+now = int(time.time())
+
+cur.execute('SELECT id FROM "user" LIMIT 1')
+user_id = cur.fetchone()[0]
+
+meta_fast = json.dumps({
+    "profile_image_url": "/static/favicon.png",
+    "capabilities": {
+        "file_context": True, "vision": True, "file_upload": True,
+        "web_search": True, "image_generation": True, "code_interpreter": True,
+        "terminal": True, "citations": True, "status_updates": True,
+        "memory": True, "builtin_tools": True
+    },
+    "tags": [],
+    "defaultFeatureIds": ["web_search", "image_generation", "code_interpreter"]
+})
+meta_indepth = json.dumps({
+    "profile_image_url": "/static/favicon.png",
+    "capabilities": {
+        "file_context": True, "vision": True, "file_upload": True,
+        "web_search": True, "image_generation": True, "code_interpreter": True,
+        "terminal": True, "citations": True, "status_updates": True,
+        "memory": True, "builtin_tools": True
+    },
+    "tags": [],
+    "defaultFeatureIds": ["web_search", "image_generation", "code_interpreter"],
+    "toolIds": ["web_search_and_crawl", "sub_agent"]
+})
+
+cur.execute('DELETE FROM model')
+cur.execute('INSERT INTO model (id, user_id, name, meta, params, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    (fast_model, user_id, 'Fast', meta_fast, '{}', now, now, 1))
+cur.execute('INSERT INTO model (id, user_id, name, meta, params, created_at, updated_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    (indepth_model, user_id, 'In-Depth', meta_indepth, '{}', now, now, 1))
+
+cur.execute('SELECT value FROM config WHERE key=?', ('openai.api_configs',))
+configs = json.loads(cur.fetchone()[0])
+configs['0']['model_ids'] = [fast_model]
+configs['1']['model_ids'] = [indepth_model]
+cur.execute('UPDATE config SET value=? WHERE key=?', (json.dumps(configs), 'openai.api_configs'))
+
+conn.commit()
+print(f'OK: models synced: {fast_model}, {indepth_model}')
+PYEOF
+
+  if [ $? -eq 0 ]; then
+    log_success "Open WebUI models synced"
+  else
+    log_warn "Open WebUI model sync failed"
+  fi
+}
+
+sync_openwebui_models
+
+# --------------------------------------------------------------
 # 9. Final health check
 # --------------------------------------------------------------
 echo ""

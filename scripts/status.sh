@@ -223,6 +223,60 @@ fi
 echo ""
 
 # --------------------------------------------------------------
+# Model Integrity (MLX ↔ Open WebUI)
+# --------------------------------------------------------------
+echo -e "${BOLD}Model Integrity (MLX ↔ Open WebUI)${NC}"
+
+mlx_fast=$(curl -s --max-time 5 http://localhost:8080/v1/models 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" 2>/dev/null)
+mlx_indepth=$(curl -s --max-time 5 http://localhost:8081/v1/models 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" 2>/dev/null)
+
+if [ -z "$mlx_fast" ]; then mlx_fast="(not responding)"; fi
+if [ -z "$mlx_indepth" ]; then mlx_indepth="(not responding)"; fi
+
+info "MLX fast:      $mlx_fast"
+info "MLX indepth:   $mlx_indepth"
+
+# Fetch Open WebUI cached models for comparison
+if have docker && docker inspect open-webui >/dev/null 2>&1; then
+  OWUI_MODELS=$(docker exec open-webui python3 -c "
+import sqlite3, json
+conn = sqlite3.connect('/app/backend/data/webui.db')
+cur = conn.cursor()
+cur.execute('SELECT id, name FROM model ORDER BY id')
+for row in cur.fetchall():
+    print(f'{row[0]}={row[1]}')
+" 2>/dev/null)
+
+  if [ -z "$OWUI_MODELS" ]; then
+    warn "Open WebUI has no models cached"
+    info "Run: ./scripts/update.sh --mlx to sync models"
+  else
+    while IFS='=' read -r model_id model_name; do
+      if [ -n "$model_id" ]; then
+        info "Open WebUI:    $model_id ($model_name)"
+        # Check if this cached model matches any MLX endpoint
+        matched=false
+        if [ "$model_id" = "$mlx_fast" ]; then
+          pass "  ↳ matches MLX fast endpoint"
+          matched=true
+        fi
+        if [ "$model_id" = "$mlx_indepth" ]; then
+          pass "  ↳ matches MLX indepth endpoint"
+          matched=true
+        fi
+        if [ "$matched" = false ]; then
+          warn "  ↳ not found on any MLX endpoint — cached model may be stale"
+        fi
+      fi
+    done <<< "$OWUI_MODELS"
+  fi
+else
+  warn "Skipping Open WebUI model check — container not available"
+fi
+
+echo ""
+
+# --------------------------------------------------------------
 # SearXNG configuration details
 # --------------------------------------------------------------
 echo -e "${BOLD}SearXNG Configuration${NC}"

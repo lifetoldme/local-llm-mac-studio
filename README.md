@@ -492,6 +492,20 @@ extra_hosts:
   - "host.docker.internal:host-gateway"
 ```
 
+### Open WebUI shows old/stale models
+
+Open WebUI caches model records in its internal SQLite database (`webui.db`). Changing the model on an MLX server (by editing a plist and reloading the LaunchAgent) does **not** automatically update Open WebUI's cache — the model picker will still show the previous model ID.
+
+**Detection:** run `./scripts/status.sh` and check the **Model Integrity** section. Green checkmarks mean the MLX servers and Open WebUI agree; a warning means drift was detected.
+
+**Fix:** model sync runs automatically as part of `install.sh` and `update.sh`, but you can also trigger it manually:
+
+```bash
+./scripts/update.sh --mlx
+```
+
+This queries both MLX endpoints for their actual model IDs and updates Open WebUI's `model` table and `openai.api_configs` to match. Refresh your browser after the sync completes.
+
 ### Hermes (remote host) cannot reach the MLX servers
 
 Hermes runs on a separate LAN host, so `localhost` won't work — it must use the Mac Studio's LAN IP. From the Hermes host:
